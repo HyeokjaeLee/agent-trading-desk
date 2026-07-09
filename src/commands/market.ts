@@ -64,6 +64,7 @@ export function registerMarketCommands(root: Command): void {
 			// Expand Korean holdings with US leading-indicator proxies (overnight forward signals).
 			const { tickers: expanded, proxies } = expandWithProxies(holdings);
 			for (const t of expanded) tickers.add(t);
+			tickers.add("KRW=X"); // USD/KRW exchange rate (always included)
 			const snapshot = await refreshSnapshot([...tickers], {
 				period: opts.period,
 				leadingIndicators: proxies,

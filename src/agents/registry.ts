@@ -171,7 +171,7 @@ export async function runRole(
 	const snapAge = Date.now() - new Date(ctx.snapshot.generatedAt).getTime();
 	if (snapAge > FRESH_MS) {
 		try {
-			const fresh = await refreshSnapshot(Object.keys(ctx.tickersByYahoo), {
+			const fresh = await refreshSnapshot([...Object.keys(ctx.tickersByYahoo), "KRW=X"], {
 				period: "1y",
 			});
 			for (const t of fresh.tickers) ctx.tickersByYahoo[t.ticker] = t;

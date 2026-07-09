@@ -82,6 +82,28 @@ function portfolioDigest(p: AggregatedPortfolio): string {
 	return `Cash: ${cash}\nHoldings: ${holdings}\nAccounts: ${p.accounts.map((a) => `${a.broker}/${a.profile}${a.included ? "" : "❌"}`).join(", ")}`;
 }
 
+/** Render FX (USD/KRW) data with trend + interpretation for stock analysis. */
+function fxDigest(ctx: AnalysisContext): string {
+	const fx = ctx.tickersByYahoo["KRW=X"];
+	if (!fx || !fx.fundamentals?.price) return "";
+	const tc: Partial<TechnicalIndicators> = fx.technicals ?? {};
+	const rate = fx.fundamentals.price;
+	const r1d = tc.return1d;
+	const r5d = tc.return5d;
+	const r20d = tc.return20d;
+	const r60d = tc.return60d;
+	const rsi = tc.rsi14;
+	const pct = (v?: number) => v === undefined ? "?" : (v >= 0 ? "+" : "") + (v * 100).toFixed(2) + "%";
+	// Interpretation: KRW weakening (rate rising) = negative for Korean stocks
+	const trend5d = r5d !== undefined && r5d > 0.005 ? "원화 약세 (한국 주식 부정적)" :
+		r5d !== undefined && r5d < -0.005 ? "원화 강세 (한국 주식 긍정적)" : "원화 보합";
+	const trend20d = r20d !== undefined && r20d > 0.01 ? "중기 원화 약세" :
+		r20d !== undefined && r20d < -0.01 ? "중기 원화 강세" : "중기 보합";
+	return `환율(USD/KRW): ${rate.toLocaleString("en-US", { maximumFractionDigits: 1 })}원 ` +
+		`(1d=${pct(r1d)} 5d=${pct(r5d)} 20d=${pct(r20d)} 60d=${pct(r60d)}) ` +
+		`RSI=${rsi?.toFixed(1) ?? "?"} → ${trend5d}, ${trend20d}`;
+}
+
 /** Render a compact per-ticker data digest (fundamentals + technicals). */
 function tickerDigest(t: TickerSnapshot): string {
 	const f: Partial<Fundamentals> = t.fundamentals ?? {};
@@ -222,6 +244,8 @@ export function userMessage(role: AgentRole, ctx: AnalysisContext): string {
 	const conv = (ctx as unknown as { conversationHistory?: string })
 		.conversationHistory;
 	const convBlock = conv ? `\n\nPRIOR CONVERSATION:\n${conv}` : "";
+	const fx = fxDigest(ctx);
+	const fxBlock = fx ? `\n\n환율 정보 (투자 분석에 반드시 참고):\n   ${fx}` : "";
 	const koreanName = `\n\nIMPORTANT: 사용자에게 결과를 전달할 때는 종목 코드(ticker)보다 해당 상품의 이름(예: 삼성전자, KODEX 미국나스닥100)을 우선 사용하라.`;
 
 	let head: string;
@@ -232,7 +256,7 @@ export function userMessage(role: AgentRole, ctx: AnalysisContext): string {
 			ctx.portfolio.holdings.length > 0
 				? `\n\nCURRENT PORTFOLIO:\n   ${portfolioDigest(ctx.portfolio)}`
 				: "";
-		head = `사용자 질문: "${ctx.userQuestion}"\n\nOBJECTIVE: 이 질문에 직접 답변하라. 포트폴리오 권고가 목표가 아니라, 사용자의 질문에 최선의 답을 제시하는 것이 목표다.\n\nMARKET STATE:\n   ${marketStateDigest(ctx)}\n\nTICKER DATA:\n   ${snapshotDigest(ctx)}${portfolioSection}${BLIND_NOTE(ctx)}${memory}${tax}${convBlock}${koreanName}`;
+		head = `사용자 질문: "${ctx.userQuestion}"\n\nOBJECTIVE: 이 질문에 직접 답변하라. 포트폴리오 권고가 목표가 아니라, 사용자의 질문에 최선의 답을 제시하는 것이 목표다.\n\nMARKET STATE:\n   ${marketStateDigest(ctx)}\n\nTICKER DATA:\n   ${snapshotDigest(ctx)}${portfolioSection}${fxBlock}${BLIND_NOTE(ctx)}${memory}${tax}${convBlock}${koreanName}`;
 	}
 
 	// Portfolio mode (original): objective + full context.
@@ -240,7 +264,7 @@ export function userMessage(role: AgentRole, ctx: AnalysisContext): string {
 		ctx.objective === "portfolio-recommend"
 			? "recommend stocks to add to the portfolio"
 			: "current-time response strategy";
-	head = `OBJECTIVE: ${obj}\n\nMARKET STATE:\n   ${marketStateDigest(ctx)}\n\nCURRENT PORTFOLIO:\n   ${portfolioDigest(ctx.portfolio)}\n\nTICKER DATA (source of truth, fetched once):\n   ${snapshotDigest(ctx)}${BLIND_NOTE(ctx)}${memory}${tax}${convBlock}${koreanName}`;
+	head = `OBJECTIVE: ${obj}\n\nMARKET STATE:\n   ${marketStateDigest(ctx)}\n\nCURRENT PORTFOLIO:\n   ${portfolioDigest(ctx.portfolio)}\n\nTICKER DATA (source of truth, fetched once):\n   ${snapshotDigest(ctx)}${fxBlock}${BLIND_NOTE(ctx)}${memory}${tax}${convBlock}${koreanName}`;
 
 	if (role === "news") {
 		return `${head}\n\nNEWS:\n   ${newsDigest(ctx)}\n\nProduce your news & sentiment report.\n${REPORT_FORMAT}`;

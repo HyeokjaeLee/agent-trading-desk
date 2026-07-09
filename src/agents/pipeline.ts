@@ -55,7 +55,7 @@ export async function buildAnalysisContext(opts: BuildContextOptions): Promise<{
 	for (const raw of opts.symbols ?? [])
 		holdings.push({ ticker: mapToYahoo(raw).ticker });
 	const { tickers: expanded, proxies } = expandWithProxies(holdings);
-	const tickers = [...new Set([...holdings.map((h) => h.ticker), ...expanded])];
+	const tickers = [...new Set([...holdings.map((h) => h.ticker), ...expanded, "KRW=X"])];
 
 	let snapshot: MarketSnapshot | undefined;
 	if (!opts.refresh) snapshot = loadSnapshot();

@@ -44,7 +44,11 @@ function parseNum(s: string | undefined): number | undefined {
 	return Number.isFinite(n) ? n : undefined;
 }
 
-function extractValue(html: string, label: string, maxDist = 600): string | undefined {
+function extractValue(
+	html: string,
+	label: string,
+	maxDist = 600,
+): string | undefined {
 	const target = `${label}(`;
 	const idx = html.indexOf(target);
 	if (idx < 0) {
@@ -81,15 +85,20 @@ function extractCoinfoData(html: string): Partial<NaverFundamentals> {
 	return result;
 }
 
-export async function fetchNaverFundamentals(code: string): Promise<NaverFundamentals | undefined> {
+export async function fetchNaverFundamentals(
+	code: string,
+): Promise<NaverFundamentals | undefined> {
 	try {
-		const resp = await fetch(`https://finance.naver.com/item/main.nhn?code=${code}`, {
-			headers: {
-				"User-Agent":
-					"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+		const resp = await fetch(
+			`https://finance.naver.com/item/main.nhn?code=${code}`,
+			{
+				headers: {
+					"User-Agent":
+						"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+				},
+				signal: AbortSignal.timeout(15_000),
 			},
-			signal: AbortSignal.timeout(15_000),
-		});
+		);
 		if (!resp.ok) return undefined;
 		const html = await resp.text();
 
@@ -117,13 +126,16 @@ export async function fetchNaverFundamentals(code: string): Promise<NaverFundame
 		};
 
 		try {
-			const resp2 = await fetch(`https://finance.naver.com/item/coinfo.naver?code=${code}`, {
-				headers: {
-					"User-Agent":
-						"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+			const resp2 = await fetch(
+				`https://finance.naver.com/item/coinfo.naver?code=${code}`,
+				{
+					headers: {
+						"User-Agent":
+							"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+					},
+					signal: AbortSignal.timeout(10_000),
 				},
-				signal: AbortSignal.timeout(10_000),
-			});
+			);
 			if (resp2.ok) {
 				const buf = await resp2.arrayBuffer();
 				const coinfoHtml = new TextDecoder("euc-kr").decode(buf);
