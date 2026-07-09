@@ -163,7 +163,7 @@ export async function runRole(
 		agentDir: isolatedAgentDir,
 		systemPromptOverride: () => {
 			if (role === "portfolio-manager" && ctx.userQuestion) {
-				return `당신은 투자 분석 종합자입니다. 항상 한국어로 답변하라.\n\n절대 금지:\n- 매수/매도/트림/홀드/관망 등의 포트폴리오 액션 제안\n- 종목 추천, 편입, 비중, 현금 비중 제안\n- "포트폴리오", "신규 진입", "분할 매수" 용어\n- 표(table), 실행 계획, 단계별 플랜\n\n반드시 할 것:\n- 사용자 질문에 대한 분석적 답변만 작성\n- 주가 예측이면: 방향(상승/하락/횡보) + 예상 가격대 + 근거 지표\n- 자연스러운 한국어 문단 (표/JSON 금지)`;
+				return `당신은 투자 분석 종합자입니다. 항상 한국어로 답변하라.\n\n분석 전 필수 단계 (refresh_market_data 도구 사용):\n1. 질문에 언급된 종목의 최신 데이터를 가져와라.\n2. 관련 시장 지표를 반드시 함께 가져와라:\n   - 한국 주식이면: SOXX(필라델피아 반도체지수), MU(마이크론), NVDA, ^IXIC(나스닥), ^GSPC(S&P500), KRW=X(환율)\n   - 미국 주식이면: ^IXIC(나스닥), ^GSPC(S&P500), 관련 섹터 ETF\n3. search_ticker로 모르는 종목을 찾아라.\n\n분석 시 반드시 고려할 것 (기술적 분석만으로는 부족):\n- 미국 시장 당일/야간 움직임이 한국장 다음날 개장에 미치는 영향 (크로스마켓 시그널)\n- 섹터 전체의 방향성 (동종 업종 ETF, 선행지표)\n- 환율 방향 (원화 강세=한국 주식 긍정, 약세=부정)\n- 시장 심리 (나스닥/S&P 지수 방향, 리스크 온오프)\n- 최근 호재/악재 (ADR 상장, 실리 발표, 신제품, 규제 변화 등)\n   ↑ 이런 정보를 알아보려면 search_ticker로 관련 종목을 찾고 refresh_market_data로 데이터를 가져와 분석하라\n- 밸류에이션 (PER, PBR, PEG 등 기본적 가치)\n- 기술적 지표 (RSI, MACD, BB, SMA)는 참고용이며 단독으로 판단 근거로 삼지 마라\n\n절대 금지:\n- 매수/매도/트림/홀드/관망 등의 포트폴리오 액션 제안\n- 종목 추천, 편입, 비중, 현금 비중 제안\n- "포트폴리오", "신규 진입", "분할 매수" 용어\n- 표(table), 실행 계획, 단계별 플랜\n\n반드시 할 것:\n- 사용자 질문에 대한 종합적 분석 답변 (기술적+기본적+거시적+센티먼트)\n- 주가 예측이면: 방향(상승/하락/횡보) + 예상 가격대 + 다각적 근거\n- 왜 그렇게 예측했는지 논리적으로 설명 (지표만 나열하지 말고 해석을 곁들여라)\n- 자연스러운 한국어 문단 (표/JSON 금지)`;
 			}
 			return systemPrompt(role);
 		},
@@ -232,9 +232,12 @@ export async function runRole(
 	const searchTickerTool = defineTool({
 		name: "search_ticker",
 		label: "종목 검색",
-		description: "회사명이나 키워드로 주식 티커를 검색한다. 한국 주식(삼성전자→005930.KS)과 미국 주식(Apple→AAPL) 모두 검색 가능. refresh_market_data로 데이터를 가져오기 전에 티커를 확인해야 할 때 사용.",
+		description:
+			"회사명이나 키워드로 주식 티커를 검색한다. 한국 주식(삼성전자→005930.KS)과 미국 주식(Apple→AAPL) 모두 검색 가능. refresh_market_data로 데이터를 가져오기 전에 티커를 확인해야 할 때 사용.",
 		parameters: Type.Object({
-			query: Type.String({ description: "회사명 또는 키워드 (예: 삼성전자, 카카오, Apple, NVIDIA)" }),
+			query: Type.String({
+				description: "회사명 또는 키워드 (예: 삼성전자, 카카오, Apple, NVIDIA)",
+			}),
 		}),
 		execute: async (_id: string, params: { query: string }) => {
 			try {
@@ -243,16 +246,46 @@ export async function runRole(
 					newsCount: 0,
 				});
 				const lines = (results.quotes ?? []).map((q) => {
-					const qy = q as { symbol?: string; shortname?: string; longname?: string; exchange?: string; quoteType?: string };
+					const qy = q as {
+						symbol?: string;
+						shortname?: string;
+						longname?: string;
+						exchange?: string;
+						quoteType?: string;
+					};
 					return `${qy.shortname ?? qy.longname ?? "?"} → ${qy.symbol} [${qy.exchange ?? "?"}] (${qy.quoteType ?? "?"})`;
 				});
 				if (lines.length === 0) {
-					return { content: [{ type: "text" as const, text: `검색 결과 없음: "${params.query}"` }], details: {} };
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `검색 결과 없음: "${params.query}"`,
+							},
+						],
+						details: {},
+					};
 				}
-				return { content: [{ type: "text" as const, text: `검색 결과 (${params.query}):
-${lines.join("\n")}` }], details: {} };
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: `검색 결과 (${params.query}):
+${lines.join("\n")}`,
+						},
+					],
+					details: {},
+				};
 			} catch (e) {
-				return { content: [{ type: "text" as const, text: `검색 실패: ${e instanceof Error ? e.message : String(e)}` }], details: {} };
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: `검색 실패: ${e instanceof Error ? e.message : String(e)}`,
+						},
+					],
+					details: {},
+				};
 			}
 		},
 	});
