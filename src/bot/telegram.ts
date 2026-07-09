@@ -16,13 +16,8 @@ import { describeImage } from "../agents/vision.js";
 import type { AnalysisContext } from "../agents/roles.js";
 import type { MarketSnapshot } from "../types.js";
 
-// Phone-number whitelist. Users share contact via Telegram keyboard to verify.
-const ALLOWED_PHONES = new Set(
-	(process.env.ALLOWED_PHONES ?? "")
-		.split(",")
-		.map((s) => s.trim())
-		.filter(Boolean),
-);
+// Password-based whitelist. User enters password → chat ID approved permanently.
+const BOT_PASSWORD = process.env.BOT_PASSWORD ?? "";
 const APPROVED_FILE = join(homedir(), ".agent-trading-desk", "approved-chats.json");
 function loadApproved(): Set<number> {
 	try {
@@ -35,11 +30,7 @@ function loadApproved(): Set<number> {
 function saveApproved(ids: Set<number>): void {
 	try { writeFileSync(APPROVED_FILE, JSON.stringify([...ids], null, 2), { mode: 0o600 }); } catch { /* ignore */ }
 }
-function normalizePhone(raw: string): string {
-	return raw.replace(/[^\d+]/g, "");
-}
 const approvedChats = loadApproved();
-
 
 /**
  * Telegram bot — long-polling server (no external dependency).
@@ -286,32 +277,18 @@ export async function startTelegramBot(token: string): Promise<void> {
 				if (!m) continue;
 				const cid = m.chat.id;
 
-				// Phone-number whitelist check.
-				if (ALLOWED_PHONES.size > 0 && !approvedChats.has(cid)) {
-					// Handle contact sharing (phone number verification).
-					if (m.contact) {
-						const phone = normalizePhone(m.contact.phone_number);
-						if ([...ALLOWED_PHONES].some((p) => normalizePhone(p) === phone)) {
-							approvedChats.add(cid);
-							saveApproved(approvedChats);
-							await send(token, cid, "✅ 인증 완료! 이제 질문하실 수 있습니다.");
-							continue;
-						}
-						await send(token, cid, "⛔ 등록되지 않은 전화번호입니다.");
+				// Password whitelist check.
+				if (BOT_PASSWORD && !approvedChats.has(cid)) {
+					if (m.text && m.text.trim() === BOT_PASSWORD) {
+						approvedChats.add(cid);
+						saveApproved(approvedChats);
+						await send(token, cid, "✅ 인증 완료! 이제 질문하실 수 있습니다.");
 						continue;
 					}
-					// Request contact sharing.
-					await call(token, "sendMessage", {
-						chat_id: cid,
-						text: "🔒 이 봇을 사용하려면 전화번호 인증이 필요합니다. 아래 버튼을 눌러 연락처를 공유해주세요.",
-						reply_markup: JSON.stringify({
-							keyboard: [[{ text: "📱 전화번호 공유하기", request_contact: true }]],
-							resize_keyboard: true,
-							one_time_keyboard: true,
-						}),
-					});
+					await send(token, cid, "🔒 이 봇은 비밀번호 인증이 필요합니다. 비밀번호를 입력해주세요.");
 					continue;
 				}
+
 
 				const s = st(cid);
 
@@ -320,7 +297,6 @@ export async function startTelegramBot(token: string): Promise<void> {
 					if (s.timer) clearTimeout(s.timer);
 					s.timer = setTimeout(() => void processChat(token, cid), BATCH_MS);
 				}
-
 
 				if (m.photo?.length) {
 					try {
