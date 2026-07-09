@@ -303,7 +303,7 @@ ${lines.join("\n")}`,
 				ctx.portfolio = portfolio;
 				const cashLines = portfolio.cash.map((c) => `${c.amount.toLocaleString("en-US", { maximumFractionDigits: 0 })} ${c.currency}`);
 				const holdingLines = portfolio.holdings.map((h) =>
-					`${h.name ?? h.ticker}: ${h.quantity}주 @${h.averagePrice ?? "?"} ${h.currency} (${h.broker}/${h.breakdown.length}계좌)`);
+					`${h.name ?? h.ticker}: ${h.quantity}주 @${h.averagePrice ?? "?"} ${h.currency} (${h.breakdown.length} accounts)`);
 				return {
 					content: [{ type: "text" as const, text: `계좌 현황 (${portfolio.asOf}):\n현금: ${cashLines.join(", ") || "없음"}\n보유 종목:\n${holdingLines.join("\n") || "없음"}` }],
 					details: {} as Record<string, unknown>,
