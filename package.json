@@ -1,0 +1,37 @@
+{
+  "name": "agent-trading-desk",
+  "version": "0.1.0",
+  "description": "Agent-friendly multi-agent investment CLI. Aggregates KIS + Toss accounts, pulls PBR/PER/PSR/PCR + charts from yfinance, runs specialist investment agents that debate to a consensus portfolio/strategy.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "td": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "engines": {
+    "bun": ">=1.1",
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "start": "bun run src/cli.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "0.80.3",
+    "@earendil-works/pi-coding-agent": "0.80.3",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@sinclair/typebox": "^0.34.0",
+    "commander": "^12.1.0",
+    "dayjs": "^1.11.13",
+    "koreainvestment-cli": "^0.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsup": "^8.3.0",
+    "typescript": "^5.7.0"
+  }
+}
