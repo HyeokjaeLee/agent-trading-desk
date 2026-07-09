@@ -1,9 +1,12 @@
 import {
 	createAgentSession,
+	defineTool,
 	DefaultResourceLoader,
 	ModelRegistry,
 	SessionManager,
 } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
+import { refreshSnapshot } from "../market/snapshot.js";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentReport, AgentRole, Recommendation } from "../types.js";
@@ -162,15 +165,81 @@ export async function runRole(
 			return systemPrompt(role);
 		},
 	});
+
+	// Auto-refresh if snapshot is stale (>10 min).
+	const FRESH_MS = 10 * 60 * 1000;
+	const snapAge = Date.now() - new Date(ctx.snapshot.generatedAt).getTime();
+	if (snapAge > FRESH_MS) {
+		try {
+			const fresh = await refreshSnapshot(Object.keys(ctx.tickersByYahoo), { period: "1y" });
+			for (const t of fresh.tickers) ctx.tickersByYahoo[t.ticker] = t;
+			ctx.snapshot = fresh;
+		} catch { /* keep cached */ }
+	}
 	await resourceLoader.reload();
+
+	// Agent-callable tool: refresh market data on demand.
+	const refreshTool = defineTool({
+		name: "refresh_market_data",
+		label: "최신 시장 데이터 조회",
+		description:
+			"시장 데이터가 오래되었거나 실시간 변동이 의심되면 호출하여 최신 주가/기술지표를 가져옵니다. 한국장 폐장 후 미국장/야간선물 움직임, 급변 상황 등에서 사용하세요.",
+		parameters: Type.Object({
+			tickers: Type.Optional(
+				Type.Array(Type.String(), {
+					description: "조회할 티커 (생략 시 전체)",
+				}),
+			),
+		}),
+		execute: async (_id: string, params: { tickers?: string[] }) => {
+			try {
+				const allTickers = params.tickers ?? Object.keys(ctx.tickersByYahoo);
+				if (allTickers.length === 0) {
+					return {
+						content: [
+							{ type: "text" as const, text: "조회할 티커가 없습니다." },
+						],
+						details: {},
+					};
+				}
+				const snap = await refreshSnapshot(allTickers, { period: "1y" });
+				for (const t of snap.tickers) ctx.tickersByYahoo[t.ticker] = t;
+				const lines = snap.tickers.map((t) => {
+					const f = t.fundamentals;
+					const tc = t.technicals;
+					return `${t.name ?? t.ticker} (${t.ticker}): 가격=${f?.price ?? "?"} 1d=${tc?.return1d !== undefined ? (tc.return1d * 100).toFixed(2) + "%" : "?"} 5d=${tc?.return5d !== undefined ? (tc.return5d * 100).toFixed(2) + "%" : "?"} RSI=${tc?.rsi14?.toFixed(1) ?? "?"}`;
+				});
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: `최신 시장 데이터 (${snap.generatedAt}):\n${lines.join("\n")}`,
+						},
+					],
+					details: {} as Record<string, unknown>,
+				};
+			} catch (e) {
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: `데이터 갱신 실패: ${e instanceof Error ? e.message : String(e)}`,
+						},
+					],
+					details: {},
+				};
+			}
+		},
+	});
 
 	const { session } = await createAgentSession({
 		model,
-		thinkingLevel: "off",
+		thinkingLevel: "medium",
 		authStorage,
 		modelRegistry,
 		resourceLoader,
 		sessionManager: SessionManager.inMemory(),
+		customTools: [refreshTool],
 	});
 
 	let text = "";
@@ -186,7 +255,7 @@ export async function runRole(
 	// Per-call timeout guard: a single slow/stuck model must not sink the run.
 	const perCallTimeoutMs =
 		(config as AppConfig & { perCallTimeoutMs?: number }).perCallTimeoutMs ??
-		150_000;
+		300_000; // 5 min — thinking models need more time
 	let timedOut = false;
 	const timer = setTimeout(() => {
 		timedOut = true;

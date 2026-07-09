@@ -18,10 +18,10 @@ export function registerAskCommands(root: Command): void {
 			if (!opts.json) out("▶ 에이전트 토론 시작…");
 
 			const { ctx } = await buildAnalysisContext({
-			objective: "portfolio-recommend",
-			fetchNews: false,
-			skipPortfolio: true,
-		} as never);
+				objective: "portfolio-recommend",
+				fetchNews: false,
+				skipPortfolio: true,
+			} as never);
 
 			// Inject the user's question into the context as the focal point.
 			(ctx as unknown as { userQuestion: string }).userQuestion = question;
@@ -38,15 +38,17 @@ export function registerAskCommands(root: Command): void {
 				return;
 			}
 
-		out(`\n═══ 트레이딩 데스크 답변 ═══`);
-		out(`질문: ${question}\n`);
-		out(rec.strategy || "답변을 생성하지 못했습니다.");
-		if (opts.report && rec.positions.length > 0) {
-			out("\n관련 종목:");
-			for (const p of rec.positions) {
-				out(`• ${p.name ?? p.ticker} → ${p.action.toUpperCase()} (신뢰도 ${(p.confidence * 100).toFixed(0)}%): ${p.rationale}`);
+			out(`\n═══ 트레이딩 데스크 답변 ═══`);
+			out(`질문: ${question}\n`);
+			out(rec.strategy || "답변을 생성하지 못했습니다.");
+			if (opts.report && rec.positions.length > 0) {
+				out("\n관련 종목:");
+				for (const p of rec.positions) {
+					out(
+						`• ${p.name ?? p.ticker} → ${p.action.toUpperCase()} (신뢰도 ${(p.confidence * 100).toFixed(0)}%): ${p.rationale}`,
+					);
+				}
 			}
-		}
 			if (opts.report) {
 				out("\n──── 에이전트별 의견 ────");
 				for (const r of outcome.reports) {
