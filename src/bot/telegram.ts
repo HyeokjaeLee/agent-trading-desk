@@ -53,14 +53,54 @@ async function call<T>(
 		})
 	).json() as Promise<R<T>>;
 }
+
+/**
+ * Convert markdown output to Telegram HTML.
+ * Handles: ##/### → <b>, **text** → <b>, *text* → <i>, `code` → <code>,
+ * --- → separator, escape HTML special chars.
+ */
+function mdToTelegramHtml(text: string): string {
+	// 1. Escape HTML special chars first.
+	let out = text
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;");
+
+	// 2. Code blocks ```...``` → <pre>...</pre>
+	out = out.replace(/```([\s\S]*?)```/g, (_m, code: string) => `<pre>${code.trim()}</pre>`);
+
+	// 3. Inline code `text` → <code>text</code>
+	out = out.replace(/`([^`]+)`/g, "<code>$1</code>");
+
+	// 4. Bold **text** or __text__ → <b>text</b>
+	out = out.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+	out = out.replace(/__([^_]+)__/g, "<b>$1</b>");
+
+	// 5. Italic *text* or _text_ → <i>text</i> (after bold so ** is consumed first)
+	out = out.replace(/(?<!\*)\*(?!\*)([^*\n]+)\*(?!\*)/g, "<i>$1</i>");
+
+	// 6. Headings ## text → <b>text</b> (line-level)
+	out = out.replace(/^#{2,}\s+(.+)$/gm, "<b>$1</b>");
+	out = out.replace(/^#\s+(.+)$/gm, "<b>$1</b>");
+
+	// 7. Horizontal rules --- → \n━━━━━━━\n
+	out = out.replace(/^---+$/gm, "\n━━━━━━━━━━━");
+
+	// 8. Bullet points • or - → keep as-is (Telegram renders them fine as text)
+	// 9. Links [text](url) → <a href="url">text</a>
+	out = out.replace(/\[([^]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+
+	return out;
+}
+
 async function send(
 	t: string,
 	c: number,
 	txt: string,
 	rt?: number,
 ): Promise<void> {
-	// Split at paragraph boundaries near Telegram's 4096 limit.
-	let remaining = txt;
+	const html = mdToTelegramHtml(txt);
+	let remaining = html;
 	while (remaining.length > 4000) {
 		let cut = remaining.lastIndexOf("\n\n", 4000);
 		if (cut < 1000) cut = remaining.lastIndexOf("\n", 4000);
@@ -71,7 +111,7 @@ async function send(
 			parse_mode: "HTML",
 			reply_to_message_id: rt,
 		});
-		rt = undefined; // only reply on first chunk
+		rt = undefined;
 		remaining = remaining.slice(cut).trimStart();
 	}
 	if (remaining)
