@@ -6,8 +6,7 @@
  * function fetches each enabled account defensively (per-account try/catch),
  * so one failing account never aborts the snapshot.
  */
-import { loadConfig } from "koreainvestment-cli";
-import type { Config } from "koreainvestment-cli";
+import { loadConfig, type Config } from "../broker/index.js";
 
 import { mapToYahoo } from "../market/ticker-map.js";
 import type {

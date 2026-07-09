@@ -49,7 +49,7 @@ export async function refreshSnapshot(
 	tickers: string[],
 	opts?: RefreshOptions,
 ): Promise<MarketSnapshot> {
-	const raw = fetchTickers(tickers, {
+	const raw = await fetchTickers(tickers, {
 		period: opts?.period,
 		interval: opts?.interval,
 	});

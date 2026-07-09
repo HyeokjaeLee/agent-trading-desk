@@ -5,8 +5,7 @@
  * KIS profile. Only balance/account/holdings reads are performed — never any
  * order, trade, orderable, or price endpoint.
  */
-import { getProfile, KisClient } from "koreainvestment-cli";
-import type { Config, Profile } from "koreainvestment-cli";
+import { getProfile, KisClient, type Config, type Profile } from "../broker/index.js";
 
 import type { AccountFetchResult } from "./aggregate.js";
 

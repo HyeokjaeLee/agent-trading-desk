@@ -18,7 +18,7 @@ and clear exit codes. It **never places orders** — account access is strictly 
   (`td market refresh`) and cached. All agents read that cache — they never hit the
   network themselves. (`td market refresh` → `~/.agent-trading-desk/market-snapshot.json`)
 - **Read-only brokerage.** Aggregates cash (KRW/USD) + holdings across **all** linked
-  KIS profiles and Toss accounts via [`koreainvestment-cli`](https://github.com/HyeokjaeLee/koreainvestment-cli).
+  KIS profiles and Toss accounts via **native clients** (`src/broker/` — no external package dep).
   No order/trade endpoints are ever called.
 - **Multi-agent debate.** Specialist analysts produce independent reports → **bull/bear**
   debate adversarially → **risk manager** sizes/gates → **judgment reviewer**
@@ -44,8 +44,8 @@ bun install
 bun run build           # → dist/cli.js
 ```
 
-Then either `bun dist/cli.js <cmd>` or link the `td` binary. Python 3 with `yfinance`
-is required for market data (only invoked through the bundled bridge).
+Then either `bun dist/cli.js <cmd>` or link the `td` binary. Requires Node 20+ / Bun only —
+market data is fetched via `yahoo-finance2` (TypeScript); **no Python runtime** is needed.
 
 ## Quick start
 
@@ -118,13 +118,13 @@ src/
   cli.ts                      # `td` entrypoint (commander)
   types.ts                    # stable domain + output schemas
   config/                     # app config + paths (~/.agent-trading-desk)
-  auth/   providers.ts accounts.ts     # models (pi AuthStorage) + brokerage (koreainvestment-cli)
+  auth/   providers.ts accounts.ts     # models (pi AuthStorage) + brokerage discovery
   accounts/  kis.ts toss.ts aggregate.ts  # READ-ONLY aggregation → AggregatedPortfolio
-  market/   yfinance.ts(snapshot via py/yfinance_fetch.py), proxies.ts, market-state.ts, ticker-map.ts
+  broker/  config.ts http.ts kis.ts toss.ts  # NATIVE read-only KIS+Toss clients + shared ~/.kis-cli config
   news/   browser-use.ts      # news via browser-use MCP (graceful degradation)
   agents/  roles.ts registry.ts debate.ts pipeline.ts memory.ts   # multi-agent orchestration
   commands/                   # auth, agent, market, account, analyze
-py/yfinance_fetch.py          # the ONLY Yahoo access (fundamentals + TA indicators)
+  market/  yfinance.ts (yahoo-finance2, TS-native fundamentals+TA), proxies.ts, market-state.ts, ticker-map.ts
 ```
 
 ## Safety

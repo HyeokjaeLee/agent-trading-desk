@@ -1,4 +1,4 @@
-import { loadConfig } from "koreainvestment-cli";
+import { loadConfig } from "../broker/index.js";
 import type { BrokerageAccountRef } from "../types.js";
 
 /**

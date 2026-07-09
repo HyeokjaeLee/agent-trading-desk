@@ -9,8 +9,7 @@
  * is NOT re-exported from the package entrypoint. Its (trivial) resolution is
  * inlined here so the public import surface stays to what the package exports.
  */
-import { TossClient } from "koreainvestment-cli";
-import type { Config, TossProfile } from "koreainvestment-cli";
+import { TossClient, type Config, type TossProfile } from "../broker/index.js";
 
 import { num } from "./kis.js";
 import type { AccountFetchResult } from "./aggregate.js";
@@ -78,8 +77,8 @@ export async function fetchTossAccount(
 				profile: profileName,
 				symbol,
 				name: h.name || undefined,
-				market: marketOf(h.marketCountry),
-				currency: h.currency,
+				market: marketOf(h.marketCountry ?? ""),
+				currency: h.currency ?? "",
 				quantity,
 				averagePrice: num(h.averagePurchasePrice),
 				lastPrice: num(h.lastPrice),

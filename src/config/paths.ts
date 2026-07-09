@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -24,20 +23,6 @@ export const MEMORY_FILE = join(MEMORY_DIR, "decisions.md");
 /** News cache directory. */
 export const NEWS_CACHE_DIR = join(APP_DIR, "news-cache");
 
-/** Path to the python yfinance bridge script. */
-export function yfinanceScriptPath(): string {
-	// Prefer the package-relative location (so global installs / invocations from
-	// any CWD still find the bridge), then fall back to CWD/py for source runs.
-	const pkgScript = join(
-		import.meta.dirname,
-		"..",
-		"..",
-		"py",
-		"yfinance_fetch.py",
-	);
-	if (existsSync(pkgScript)) return pkgScript;
-	return join(process.cwd(), "py", "yfinance_fetch.py");
-}
 
 /** Temp scratch dir (gitignored). */
 export const TMP_DIR = join(process.cwd(), ".pi", "tmp");
