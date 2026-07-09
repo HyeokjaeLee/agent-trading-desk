@@ -279,7 +279,7 @@ export function userMessage(role: AgentRole, ctx: AnalysisContext): string {
 			.map((d) => `[R${d.round} ${d.speaker}] ${d.text}`)
 			.join("\n");
 		if (ctx.userQuestion) {
-			return `${head}\n\n분석가 보고서:\n${reports}\n\n토론:\n${debate}\n\n위 분석을 종합하여 사용자의 질문에 직접 답변하라. 포트폴리오 권고나 종목별 매수/매도 액션이 아니다. 사용자가 물어본 것에 대해 명확하고 구체적으로 답하라. 한국어로 작성하라. JSON이나 표 형식 없이 자연스러운 글로 답변하라.`;
+			return `${head}\n\n분석가 보고서:\n${reports}\n\n토론:\n${debate}\n\n위 보고서를 참고하여 다음 질문에 ONLY 답변하라:\n"${ctx.userQuestion}"\n\n규칙:\n1. 매수/매도/트림/비중/현금/편입/추천 등의 포트폴리오 관리 답변 절대 금지\n2. 표(table), JSON, 실행 계획 금지\n3. 주가 예측이면: 방향(상승/하락/횡보) + 예상 가격대 + 근거 지표만 답변\n4. 한국어 자연스러운 문단으로 작성`;
 		}
 		return `${head}\n\nFINAL SYNTHESIS INPUTS:\n${reports}\n\nDEBATE:\n${debate}\n\nProduce the FINAL portfolio decision. End with a fenced JSON block EXACTLY matching:\n\`\`\`json\n{"positions":[{"ticker":"","name":"","action":"buy|hold|trim|sell|watch|avoid","confidence":0.0,"rationale":"","targetWeight":0.0,"horizon":"short|medium|long","keyRisks":[]}],"strategy":"","cashGuidance":"","warnings":[]}\n\`\`\``;
 	}

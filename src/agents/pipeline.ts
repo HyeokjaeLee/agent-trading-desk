@@ -25,6 +25,8 @@ export interface BuildContextOptions {
 	asOf?: string;
 	/** History window. */
 	period?: string;
+	/** Skip portfolio data in context (for td ask — focus on question, not holdings). */
+	skipPortfolio?: boolean;
 }
 
 /** Assemble the full AnalysisContext: portfolio + snapshot (source of truth) + news + memory. */
@@ -90,7 +92,9 @@ export async function buildAnalysisContext(opts: BuildContextOptions): Promise<{
 	const ctx: AnalysisContext = {
 		objective: opts.objective,
 		marketState,
-		portfolio,
+		portfolio: opts.skipPortfolio
+			? { asOf: portfolio.asOf, cash: [], holdings: [], accounts: [] }
+			: portfolio,
 		snapshot,
 		tickersByYahoo,
 		config,
