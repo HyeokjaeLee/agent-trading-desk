@@ -4,6 +4,7 @@ import {
 	DefaultResourceLoader,
 	ModelRegistry,
 	SessionManager,
+	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import YahooFinance from "yahoo-finance2";
@@ -295,24 +296,49 @@ ${lines.join("\n")}`,
 	const getPortfolioTool = defineTool({
 		name: "get_portfolio",
 		label: "내 계좌 조회",
-		description: "사용자의 실제 보유 종목, 현금(원화/달러), 평가 금액을 조회한다. 질문이 포트폴리오 분석, 집중도, 비중 조정과 관련된 경우에만 사용하라. READ-ONLY — 주문/매매 불가.",
+		description:
+			"사용자의 실제 보유 종목, 현금(원화/달러), 평가 금액을 조회한다. 질문이 포트폴리오 분석, 집중도, 비중 조정과 관련된 경우에만 사용하라. READ-ONLY — 주문/매매 불가.",
 		parameters: Type.Object({}),
 		execute: async () => {
 			try {
 				const portfolio = await aggregatePortfolio(ctx.config.accounts);
 				ctx.portfolio = portfolio;
-				const cashLines = portfolio.cash.map((c) => `${c.amount.toLocaleString("en-US", { maximumFractionDigits: 0 })} ${c.currency}`);
-				const holdingLines = portfolio.holdings.map((h) =>
-					`${h.name ?? h.ticker}: ${h.quantity}주 @${h.averagePrice ?? "?"} ${h.currency} (${h.breakdown.length} accounts)`);
+				const cashLines = portfolio.cash.map(
+					(c) =>
+						`${c.amount.toLocaleString("en-US", { maximumFractionDigits: 0 })} ${c.currency}`,
+				);
+				const holdingLines = portfolio.holdings.map(
+					(h) =>
+						`${h.name ?? h.ticker}: ${h.quantity}주 @${h.averagePrice ?? "?"} ${h.currency} (${h.breakdown.length} accounts)`,
+				);
 				return {
-					content: [{ type: "text" as const, text: `계좌 현황 (${portfolio.asOf}):\n현금: ${cashLines.join(", ") || "없음"}\n보유 종목:\n${holdingLines.join("\n") || "없음"}` }],
+					content: [
+						{
+							type: "text" as const,
+							text: `계좌 현황 (${portfolio.asOf}):\n현금: ${cashLines.join(", ") || "없음"}\n보유 종목:\n${holdingLines.join("\n") || "없음"}`,
+						},
+					],
 					details: {} as Record<string, unknown>,
 				};
 			} catch (e) {
-				return { content: [{ type: "text" as const, text: `계좌 조회 실패: ${e instanceof Error ? e.message : String(e)}` }], details: {} };
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: `계좌 조회 실패: ${e instanceof Error ? e.message : String(e)}`,
+						},
+					],
+					details: {},
+				};
 			}
 		},
 	});
+
+	// Persistent session with compaction enabled — context accumulates naturally.
+	const settingsManager = SettingsManager.inMemory({
+		compaction: { enabled: true, reserveTokens: 8000, keepRecentTokens: 4000 },
+	});
+	const sessionManager = SessionManager.inMemory(process.cwd(), {});
 
 	const { session } = await createAgentSession({
 		model,
@@ -320,7 +346,8 @@ ${lines.join("\n")}`,
 		authStorage,
 		modelRegistry,
 		resourceLoader,
-		sessionManager: SessionManager.inMemory(),
+		settingsManager,
+		sessionManager,
 		customTools: ctx.allowAccountAccess
 			? [refreshTool, searchTickerTool, getPortfolioTool]
 			: [refreshTool, searchTickerTool],

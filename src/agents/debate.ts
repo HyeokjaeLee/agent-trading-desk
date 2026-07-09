@@ -75,7 +75,7 @@ export async function runAnalysis(
 			debate.push({
 				round,
 				speaker,
-				text: res.text.slice(0, 1600),
+				text: res.text,
 			});
 		}
 	}

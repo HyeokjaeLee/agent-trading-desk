@@ -80,8 +80,8 @@ export function registerAskCommands(root: Command): void {
 				},
 				portfolio: emptyPortfolio,
 				snapshot: emptySnapshot,
-			tickersByYahoo: {}, // PM이 채움
-			allowAccountAccess: true, // CLI에서는 계좌 접근 허용
+				tickersByYahoo: {}, // PM이 채움
+				allowAccountAccess: true, // CLI에서는 계좌 접근 허용
 				config,
 				userQuestion: question,
 				taxContext: taxContext + taxNote + staleNote,

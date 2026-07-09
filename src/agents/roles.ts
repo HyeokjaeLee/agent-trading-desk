@@ -289,7 +289,7 @@ export function userMessage(role: AgentRole, ctx: AnalysisContext): string {
 		const reports = (ctx.priorReports ?? [])
 			.map(
 				(r) =>
-					`### ${ROLE_LABELS[r.role]} [${r.stance}, conf ${r.confidence}]\n${r.analysis.slice(0, 700)}\nkey: ${r.keyPoints.join("; ")}\nsuggest: ${r.suggestions.join("; ")}`,
+					`### ${ROLE_LABELS[r.role]} [${r.stance}, conf ${r.confidence}]\n${r.analysis}\nkey: ${r.keyPoints.join("; ")}\nsuggest: ${r.suggestions.join("; ")}`,
 			)
 			.join("\n\n");
 		return `${head}\n\nANALYST REPORTS:\n${reports}\n\nProduce your ${role.toUpperCase()} case referencing the reports above. Run ${ctx.config.debateRounds} rounds mentally; here is the prior debate if any:\n${(ctx.debateHistory ?? []).map((d) => `[R${d.round} ${d.speaker}] ${d.text}`).join("\n") || "(first round)"}\n${REPORT_FORMAT}`;
@@ -311,7 +311,7 @@ export function userMessage(role: AgentRole, ctx: AnalysisContext): string {
 		const reports = (ctx.priorReports ?? [])
 			.map(
 				(r) =>
-					`### ${ROLE_LABELS[r.role]} [${r.stance}, conf ${r.confidence}]\n${r.analysis.slice(0, 700)}\nsuggest: ${r.suggestions.join("; ")}`,
+					`### ${ROLE_LABELS[r.role]} [${r.stance}, conf ${r.confidence}]\n${r.analysis}\nsuggest: ${r.suggestions.join("; ")}`,
 			)
 			.join("\n\n");
 		const debate = (ctx.debateHistory ?? [])
