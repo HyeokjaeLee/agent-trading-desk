@@ -6,6 +6,7 @@ import {
 	SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import YahooFinance from "yahoo-finance2";
 import { refreshSnapshot } from "../market/snapshot.js";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -19,6 +20,8 @@ import {
 	userMessage,
 	type AnalysisContext,
 } from "./roles.js";
+
+const yahoo = new YahooFinance({ suppressNotices: ["yahooSurvey"] });
 
 export interface RunResult {
 	role: AgentRole;
@@ -225,6 +228,35 @@ export async function runRole(
 		},
 	});
 
+	// Agent-callable tool: search ticker by company name.
+	const searchTickerTool = defineTool({
+		name: "search_ticker",
+		label: "종목 검색",
+		description: "회사명이나 키워드로 주식 티커를 검색한다. 한국 주식(삼성전자→005930.KS)과 미국 주식(Apple→AAPL) 모두 검색 가능. refresh_market_data로 데이터를 가져오기 전에 티커를 확인해야 할 때 사용.",
+		parameters: Type.Object({
+			query: Type.String({ description: "회사명 또는 키워드 (예: 삼성전자, 카카오, Apple, NVIDIA)" }),
+		}),
+		execute: async (_id: string, params: { query: string }) => {
+			try {
+				const results = await yahoo.search(params.query, {
+					quotesCount: 5,
+					newsCount: 0,
+				});
+				const lines = (results.quotes ?? []).map((q) => {
+					const qy = q as { symbol?: string; shortname?: string; longname?: string; exchange?: string; quoteType?: string };
+					return `${qy.shortname ?? qy.longname ?? "?"} → ${qy.symbol} [${qy.exchange ?? "?"}] (${qy.quoteType ?? "?"})`;
+				});
+				if (lines.length === 0) {
+					return { content: [{ type: "text" as const, text: `검색 결과 없음: "${params.query}"` }], details: {} };
+				}
+				return { content: [{ type: "text" as const, text: `검색 결과 (${params.query}):
+${lines.join("\n")}` }], details: {} };
+			} catch (e) {
+				return { content: [{ type: "text" as const, text: `검색 실패: ${e instanceof Error ? e.message : String(e)}` }], details: {} };
+			}
+		},
+	});
+
 	const { session } = await createAgentSession({
 		model,
 		thinkingLevel: "medium",
@@ -232,7 +264,7 @@ export async function runRole(
 		modelRegistry,
 		resourceLoader,
 		sessionManager: SessionManager.inMemory(),
-		customTools: [refreshTool],
+		customTools: [refreshTool, searchTickerTool],
 	});
 
 	let text = "";

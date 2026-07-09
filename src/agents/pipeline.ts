@@ -64,7 +64,9 @@ export async function buildAnalysisContext(opts: BuildContextOptions): Promise<{
 	// Refresh if there is no cache OR any requested ticker (+proxies) is missing
 	// from the cached snapshot, so --symbols NEWTICKER is never silently dropped.
 	const cached = new Set((snapshot?.tickers ?? []).map((t) => t.ticker));
-	const snapAgeMs = snapshot ? Date.now() - new Date(snapshot.generatedAt).getTime() : Infinity;
+	const snapAgeMs = snapshot
+		? Date.now() - new Date(snapshot.generatedAt).getTime()
+		: Infinity;
 	const tooOld = snapAgeMs > 10 * 60 * 1000;
 	const stale = !snapshot || tooOld || tickers.some((t) => !cached.has(t));
 	if (stale) {
