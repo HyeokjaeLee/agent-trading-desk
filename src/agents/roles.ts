@@ -93,15 +93,26 @@ function fxDigest(ctx: AnalysisContext): string {
 	const r20d = tc.return20d;
 	const r60d = tc.return60d;
 	const rsi = tc.rsi14;
-	const pct = (v?: number) => v === undefined ? "?" : (v >= 0 ? "+" : "") + (v * 100).toFixed(2) + "%";
+	const pct = (v?: number) =>
+		v === undefined ? "?" : (v >= 0 ? "+" : "") + (v * 100).toFixed(2) + "%";
 	// Interpretation: KRW weakening (rate rising) = negative for Korean stocks
-	const trend5d = r5d !== undefined && r5d > 0.005 ? "원화 약세 (한국 주식 부정적)" :
-		r5d !== undefined && r5d < -0.005 ? "원화 강세 (한국 주식 긍정적)" : "원화 보합";
-	const trend20d = r20d !== undefined && r20d > 0.01 ? "중기 원화 약세" :
-		r20d !== undefined && r20d < -0.01 ? "중기 원화 강세" : "중기 보합";
-	return `환율(USD/KRW): ${rate.toLocaleString("en-US", { maximumFractionDigits: 1 })}원 ` +
+	const trend5d =
+		r5d !== undefined && r5d > 0.005
+			? "원화 약세 (한국 주식 부정적)"
+			: r5d !== undefined && r5d < -0.005
+				? "원화 강세 (한국 주식 긍정적)"
+				: "원화 보합";
+	const trend20d =
+		r20d !== undefined && r20d > 0.01
+			? "중기 원화 약세"
+			: r20d !== undefined && r20d < -0.01
+				? "중기 원화 강세"
+				: "중기 보합";
+	return (
+		`환율(USD/KRW): ${rate.toLocaleString("en-US", { maximumFractionDigits: 1 })}원 ` +
 		`(1d=${pct(r1d)} 5d=${pct(r5d)} 20d=${pct(r20d)} 60d=${pct(r60d)}) ` +
-		`RSI=${rsi?.toFixed(1) ?? "?"} → ${trend5d}, ${trend20d}`;
+		`RSI=${rsi?.toFixed(1) ?? "?"} → ${trend5d}, ${trend20d}`
+	);
 }
 
 /** Render a compact per-ticker data digest (fundamentals + technicals). */
@@ -245,7 +256,9 @@ export function userMessage(role: AgentRole, ctx: AnalysisContext): string {
 		.conversationHistory;
 	const convBlock = conv ? `\n\nPRIOR CONVERSATION:\n${conv}` : "";
 	const fx = fxDigest(ctx);
-	const fxBlock = fx ? `\n\n환율 정보 (투자 분석에 반드시 참고):\n   ${fx}` : "";
+	const fxBlock = fx
+		? `\n\n환율 정보 (투자 분석에 반드시 참고):\n   ${fx}`
+		: "";
 	const koreanName = `\n\nIMPORTANT: 사용자에게 결과를 전달할 때는 종목 코드(ticker)보다 해당 상품의 이름(예: 삼성전자, KODEX 미국나스닥100)을 우선 사용하라.`;
 
 	let head: string;

@@ -166,20 +166,9 @@ export async function runRole(
 		},
 	});
 
-	// Auto-refresh if snapshot is stale (>10 min).
-	const FRESH_MS = 10 * 60 * 1000;
-	const snapAge = Date.now() - new Date(ctx.snapshot.generatedAt).getTime();
-	if (snapAge > FRESH_MS) {
-		try {
-			const fresh = await refreshSnapshot([...Object.keys(ctx.tickersByYahoo), "KRW=X"], {
-				period: "1y",
-			});
-			for (const t of fresh.tickers) ctx.tickersByYahoo[t.ticker] = t;
-			ctx.snapshot = fresh;
-		} catch {
-			/* keep cached */
-		}
-	}
+	// Note: snapshot staleness is already checked in buildAnalysisContext (pipeline.ts).
+	// The refresh_market_data tool is available for agents to fetch on demand.
+	void refreshSnapshot;
 	await resourceLoader.reload();
 
 	// Agent-callable tool: refresh market data on demand.

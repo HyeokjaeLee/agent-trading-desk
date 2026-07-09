@@ -55,14 +55,18 @@ export async function buildAnalysisContext(opts: BuildContextOptions): Promise<{
 	for (const raw of opts.symbols ?? [])
 		holdings.push({ ticker: mapToYahoo(raw).ticker });
 	const { tickers: expanded, proxies } = expandWithProxies(holdings);
-	const tickers = [...new Set([...holdings.map((h) => h.ticker), ...expanded, "KRW=X"])];
+	const tickers = [
+		...new Set([...holdings.map((h) => h.ticker), ...expanded, "KRW=X"]),
+	];
 
 	let snapshot: MarketSnapshot | undefined;
 	if (!opts.refresh) snapshot = loadSnapshot();
 	// Refresh if there is no cache OR any requested ticker (+proxies) is missing
 	// from the cached snapshot, so --symbols NEWTICKER is never silently dropped.
 	const cached = new Set((snapshot?.tickers ?? []).map((t) => t.ticker));
-	const stale = !snapshot || tickers.some((t) => !cached.has(t));
+	const snapAgeMs = snapshot ? Date.now() - new Date(snapshot.generatedAt).getTime() : Infinity;
+	const tooOld = snapAgeMs > 10 * 60 * 1000;
+	const stale = !snapshot || tooOld || tickers.some((t) => !cached.has(t));
 	if (stale) {
 		if (tickers.length === 0)
 			fail("No tickers to analyze (no holdings and no --symbols).", 2);
