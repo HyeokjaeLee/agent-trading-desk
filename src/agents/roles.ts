@@ -59,6 +59,8 @@ export interface AnalysisContext {
 	priorDecisions?: string;
 	/** User's free-form question (for td ask). */
 	userQuestion?: string;
+	/** Whether account access is allowed (CLI=true, Telegram=false). */
+	allowAccountAccess?: boolean;
 	/** Tax/regulatory context (separate block, auto-refreshed). */
 	taxContext?: string;
 }

@@ -20,7 +20,8 @@ import type { MarketSnapshot, AggregatedPortfolio } from "../types.js";
  * 2. 대화 10분 경과: 신선하지 않음 프롬프트 주입
  * 3. 빈 tickersByYahoo 시작 → PM이 refresh_market_data 도구로 필요 종목 fetch
  * 4. PM이 fetch한 데이터를 sub-agents가 상속 (참조 공유)
- * 5. 계좌 정보 불필요 (td analyze에서만 사용)
+ * 4. PM이 fetch한 데이터를 sub-agents가 상속 (참조 공유)
+ * 5. CLI에서는 계좌 접근 허용 (get_portfolio 도구) — 텔레그램 봇은 차단
  */
 
 const SESSION_CHAT_ID = 0; // CLI 단일 세션
@@ -79,7 +80,8 @@ export function registerAskCommands(root: Command): void {
 				},
 				portfolio: emptyPortfolio,
 				snapshot: emptySnapshot,
-				tickersByYahoo: {}, // PM이 채움
+			tickersByYahoo: {}, // PM이 채움
+			allowAccountAccess: true, // CLI에서는 계좌 접근 허용
 				config,
 				userQuestion: question,
 				taxContext: taxContext + taxNote + staleNote,
