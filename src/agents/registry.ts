@@ -171,10 +171,14 @@ export async function runRole(
 	const snapAge = Date.now() - new Date(ctx.snapshot.generatedAt).getTime();
 	if (snapAge > FRESH_MS) {
 		try {
-			const fresh = await refreshSnapshot(Object.keys(ctx.tickersByYahoo), { period: "1y" });
+			const fresh = await refreshSnapshot(Object.keys(ctx.tickersByYahoo), {
+				period: "1y",
+			});
 			for (const t of fresh.tickers) ctx.tickersByYahoo[t.ticker] = t;
 			ctx.snapshot = fresh;
-		} catch { /* keep cached */ }
+		} catch {
+			/* keep cached */
+		}
 	}
 	await resourceLoader.reload();
 

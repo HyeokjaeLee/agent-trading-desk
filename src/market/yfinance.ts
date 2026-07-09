@@ -7,9 +7,13 @@
  * is ported faithfully from the former `py/yfinance_fetch.py`. The result is
  * fetched ONCE per invocation and cached by the snapshot layer.
  *
+ * For Korean stocks (.KS/.KQ) where Yahoo omits PER/PBR/EPS/BPS,
+ * Naver Finance is used as a fallback (see naver.ts).
+ *
  * No subprocess / Python is involved.
  */
 import YahooFinance from "yahoo-finance2";
+import { fetchNaverFundamentals, getKoreanCode } from "./naver.js";
 
 /** Options forwarded to the Yahoo fetch. */
 export interface FetchOptions {
@@ -79,6 +83,8 @@ export interface BridgeFundamentals {
 	beta?: number;
 	fiftyTwoWeekHigh?: number;
 	fiftyTwoWeekLow?: number;
+	eps?: number;
+	bps?: number;
 	name?: string;
 }
 
@@ -446,16 +452,43 @@ async function fetchOne(
 		const name = firstString(price?.longName, price?.shortName);
 
 		out.name = name;
+
+		// ---- Fundamentals (Yahoo) -------------------------------------------
+		const trailingPE = toFloat(detail?.trailingPE);
+		const priceToBook =
+			toFloat(detail?.priceToBook) ?? toFloat(keys?.priceToBook);
+
+		// ---- Korean stock fallback: Naver Finance ----------------------------
+		const krCode = getKoreanCode(ticker);
+		let naverPER = trailingPE;
+		let naverPBR = priceToBook;
+		let naverEPS: number | undefined;
+		let naverBPS: number | undefined;
+		let naverROE = toFloat(fin?.returnOnEquity);
+		if (krCode && (!naverPER || !naverPBR)) {
+			try {
+				const naver = await fetchNaverFundamentals(krCode);
+				if (naver) {
+					naverPER = naverPER ?? naver.per;
+					naverPBR = naverPBR ?? naver.pbr;
+					naverEPS = naver.eps;
+					naverBPS = naver.bps;
+					naverROE = naverROE ?? naver.roe;
+				}
+			} catch {
+				/* keep Yahoo data */
+			}
+		}
 		out.fundamentals = {
 			symbol: firstString(price?.symbol),
 			currency: firstString(price?.currency, detail?.currency),
 			currentPrice,
 			price: lastClose,
 			marketCap,
-			trailingPE: toFloat(detail?.trailingPE),
+			trailingPE: naverPER,
 			forwardPE: toFloat(detail?.forwardPE) ?? toFloat(keys?.forwardPE),
 			pegRatio: toFloat(detail?.pegRatio) ?? toFloat(keys?.pegRatio),
-			priceToBook: toFloat(detail?.priceToBook) ?? toFloat(keys?.priceToBook),
+			priceToBook: naverPBR,
 			priceToSalesTrailing12Months: toFloat(
 				detail?.priceToSalesTrailing12Months,
 			),
@@ -464,7 +497,7 @@ async function fetchOne(
 			profitMargins:
 				toFloat(fin?.profitMargins) ?? toFloat(keys?.profitMargins),
 			operatingMargins: toFloat(fin?.operatingMargins),
-			returnOnEquity: toFloat(fin?.returnOnEquity),
+			returnOnEquity: naverROE,
 			returnOnAssets: toFloat(fin?.returnOnAssets),
 			revenueGrowth: toFloat(fin?.revenueGrowth),
 			earningsGrowth: toFloat(fin?.earningsGrowth),
@@ -475,6 +508,8 @@ async function fetchOne(
 			fiftyTwoWeekHigh: toFloat(detail?.fiftyTwoWeekHigh),
 			fiftyTwoWeekLow: toFloat(detail?.fiftyTwoWeekLow),
 			name,
+			eps: naverEPS ?? toFloat(keys?.trailingEps),
+			bps: naverBPS,
 		};
 
 		// ---- Technicals --------------------------------------------------
