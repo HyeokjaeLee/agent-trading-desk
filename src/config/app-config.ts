@@ -30,6 +30,8 @@ export interface AppConfig {
 	asOfDate?: string;
 	/** Whether to ignore fresh data and use only the snapshot (backtest mode). */
 	blindMode?: boolean;
+	/** Vision model for image side-calls (default: zai/glm-5v-turbo). */
+	visionModel?: { provider: string; modelId: string };
 }
 
 const DEFAULT_CONFIG: AppConfig = {

@@ -1,4 +1,10 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync } from "node:fs";
+import {
+	existsSync,
+	readFileSync,
+	writeFileSync,
+	mkdirSync,
+	chmodSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
@@ -80,7 +86,8 @@ export function loadConfig(): Config {
 
 /** Persist config (used only by account-registration helpers). */
 export function saveConfig(config: Config): void {
-	if (!existsSync(CONFIG_DIR)) mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
+	if (!existsSync(CONFIG_DIR))
+		mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
 	writeFileSync(CONFIG_FILE, stringifyYaml(config), { mode: 0o600 });
 	try {
 		chmodSync(CONFIG_FILE, 0o600);
@@ -93,7 +100,9 @@ export function getProfile(config: Config, name?: string): Profile {
 	const target = name ?? config.defaultProfile;
 	const profile = config.profiles[target];
 	if (!profile) {
-		throw new Error(`Profile "${target}" not found. Run 'kis auth login' to create one.`);
+		throw new Error(
+			`Profile "${target}" not found. Run 'kis auth login' to create one.`,
+		);
 	}
 	return profile;
 }
@@ -102,7 +111,9 @@ export function getTossProfile(config: Config, name?: string): TossProfile {
 	const target = name ?? config.tossDefaultProfile;
 	const profile = config.tossProfiles[target];
 	if (!profile) {
-		throw new Error(`Toss profile "${target}" not found. Run 'toss auth login' to create one.`);
+		throw new Error(
+			`Toss profile "${target}" not found. Run 'toss auth login' to create one.`,
+		);
 	}
 	return profile;
 }
@@ -123,7 +134,9 @@ export function loadTokenCache(): TokenCache {
 
 export function saveTokenCache(cache: TokenCache): void {
 	if (!existsSync(CONFIG_DIR)) mkdirSync(CONFIG_DIR, { recursive: true });
-	writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache, null, 2), { mode: 0o600 });
+	writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(cache, null, 2), {
+		mode: 0o600,
+	});
 	try {
 		chmodSync(TOKEN_CACHE_FILE, 0o600);
 	} catch {

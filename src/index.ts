@@ -57,7 +57,7 @@ export {
 } from "./agents/pipeline.js";
 export { recordDecision, loadRelevantMemory } from "./agents/memory.js";
 export {
-	fetchNews,
+	runNewsAnalyst,
 	type NewsItem,
 	type NewsResult,
 } from "./news/browser-use.js";

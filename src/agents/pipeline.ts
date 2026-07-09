@@ -4,8 +4,9 @@ import { refreshSnapshot, loadSnapshot } from "../market/snapshot.js";
 import { mapToYahoo } from "../market/ticker-map.js";
 import { expandWithProxies } from "../market/proxies.js";
 import { getMarketState } from "../market/market-state.js";
-import { fetchNews, type NewsItem } from "../news/browser-use.js";
+import { runNewsAnalyst } from "../news/browser-use.js";
 import { loadRelevantMemory } from "./memory.js";
+import { ensureTaxContextFresh } from "./tax-context.js";
 import type { AnalysisContext } from "./roles.js";
 import type { AggregatedPortfolio, MarketSnapshot } from "../types.js";
 import { fail } from "../output.js";
@@ -74,31 +75,16 @@ export async function buildAnalysisContext(opts: BuildContextOptions): Promise<{
 	const tickersByYahoo: Record<string, (typeof snapshot.tickers)[number]> = {};
 	for (const t of snapshot.tickers) tickersByYahoo[t.ticker] = t;
 
-	// 3. News (optional; degrades gracefully).
-	let news: NewsItem[] | undefined;
-	let newsReason: string | undefined;
-	const wantNews = opts.fetchNews ?? config.newsEnabled;
-	if (wantNews) {
-		const queries = tickers.map((t) => {
-			const region = t.endsWith(".KS") || t.endsWith(".KQ") ? "KR" : "US";
-			return {
-				query: `${t} stock news`,
-				region: region as "KR" | "US",
-				ticker: t,
-			};
-		});
-		const result = await fetchNews(queries, { nowIso: asOf });
-		news = result.degraded ? undefined : result.items;
-		newsReason = result.degraded ? result.reason : undefined;
-	}
-
 	// 4. Market state.
 	const marketState = {
 		KR: getMarketState("KR", asOf),
 		US: getMarketState("US", asOf),
 	};
 
-	// 5. Decision memory.
+	// 5. Tax/regulatory context (auto-refreshed if stale).
+	const { context: taxContext } = await ensureTaxContextFresh();
+
+	// 6. Decision memory.
 	const priorDecisions = loadRelevantMemory(tickers);
 
 	const ctx: AnalysisContext = {
@@ -107,12 +93,19 @@ export async function buildAnalysisContext(opts: BuildContextOptions): Promise<{
 		portfolio,
 		snapshot,
 		tickersByYahoo,
-		news,
-		newsReason,
 		config,
 		blind: opts.blind ?? config.blindMode ?? false,
 		priorDecisions,
+		taxContext,
 	};
+
+	// 6. Merged News analyst (browser-use: persona + context + Mimo model).
+	if (opts.fetchNews ?? config.newsEnabled) {
+		const nr = await runNewsAnalyst(ctx, config);
+		ctx.news = nr.items.length > 0 ? nr.items : undefined;
+		ctx.newsReport = nr.report;
+		if (nr.degraded) ctx.newsReason = nr.reason;
+	}
 
 	return { ctx, portfolio, snapshot };
 }

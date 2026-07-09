@@ -42,7 +42,9 @@ interface TossEnvelope<T> {
 }
 
 /** Issue a Toss OAuth2 client-credentials token (POST /oauth2/token). */
-export async function issueTossAccessToken(profile: TossProfile): Promise<CachedToken> {
+export async function issueTossAccessToken(
+	profile: TossProfile,
+): Promise<CachedToken> {
 	const url = `${TOSS_BASE_URL}/oauth2/token`;
 	const form = new URLSearchParams();
 	form.set("grant_type", "client_credentials");
@@ -53,10 +55,17 @@ export async function issueTossAccessToken(profile: TossProfile): Promise<Cached
 		headers: { "content-type": "application/x-www-form-urlencoded" },
 		body: form.toString(),
 	});
-	if (status !== 200) throw new Error(`토스 접근 토큰 발급 실패 (HTTP ${status}): ${text}`);
-	const data = JSON.parse(text) as { access_token: string; expires_in?: number };
-	if (!data.access_token) throw new Error(`접근 토큰 발급 응답에 access_token 이 없습니다: ${text}`);
-	const expiresAt = new Date(Date.now() + (data.expires_in ?? 86_399) * 1000).toISOString();
+	if (status !== 200)
+		throw new Error(`토스 접근 토큰 발급 실패 (HTTP ${status}): ${text}`);
+	const data = JSON.parse(text) as {
+		access_token: string;
+		expires_in?: number;
+	};
+	if (!data.access_token)
+		throw new Error(`접근 토큰 발급 응답에 access_token 이 없습니다: ${text}`);
+	const expiresAt = new Date(
+		Date.now() + (data.expires_in ?? 86_399) * 1000,
+	).toISOString();
 	return { accessToken: data.access_token, expiresAt, profile: "__pending__" };
 }
 
@@ -69,8 +78,12 @@ export async function getOrIssueTossToken(
 	const cache = loadTokenCache();
 	const key = tossTokenCacheKey(profileName);
 	const cached = cache[key];
-	if (!options.forceRefresh && cached && isTokenFresh(cached)) return cached.accessToken;
-	const record: CachedToken = { ...(await issueTossAccessToken(profile)), profile: profileName };
+	if (!options.forceRefresh && cached && isTokenFresh(cached))
+		return cached.accessToken;
+	const record: CachedToken = {
+		...(await issueTossAccessToken(profile)),
+		profile: profileName,
+	};
 	cache[key] = record;
 	saveTokenCache(cache);
 	return record.accessToken;
@@ -112,7 +125,10 @@ export class TossClient {
 		};
 		if (options.account) headers["x-tossinvest-account"] = options.account;
 
-		const init: RequestInit & { method: string } = { method: options.method, headers };
+		const init: RequestInit & { method: string } = {
+			method: options.method,
+			headers,
+		};
 		if (options.method === "POST") {
 			headers["content-type"] = "application/json";
 			init.body = JSON.stringify(options.body ?? {});
@@ -132,12 +148,18 @@ export class TossClient {
 
 	/** GET /api/v1/accounts (no account header). */
 	async getAccounts<T = TossAccount>(): Promise<T[]> {
-		const body = await this.call<TossEnvelope<T[]>>({ method: "GET", path: "/api/v1/accounts" });
+		const body = await this.call<TossEnvelope<T[]>>({
+			method: "GET",
+			path: "/api/v1/accounts",
+		});
 		return body.result;
 	}
 
 	/** GET /api/v1/holdings (account header). */
-	async getHoldings<T = TossHolding>(opts: { accountSeq: string; symbol?: string }): Promise<T[]> {
+	async getHoldings<T = TossHolding>(opts: {
+		accountSeq: string;
+		symbol?: string;
+	}): Promise<T[]> {
 		const body = await this.call<TossEnvelope<{ items: T[] }>>({
 			method: "GET",
 			path: "/api/v1/holdings",
@@ -148,7 +170,10 @@ export class TossClient {
 	}
 
 	/** GET /api/v1/buying-power (account header). */
-	async getBuyingPower<T = TossBuyingPower>(opts: { accountSeq: string; currency: string }): Promise<T> {
+	async getBuyingPower<T = TossBuyingPower>(opts: {
+		accountSeq: string;
+		currency: string;
+	}): Promise<T> {
 		const body = await this.call<TossEnvelope<T>>({
 			method: "GET",
 			path: "/api/v1/buying-power",

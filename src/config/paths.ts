@@ -23,6 +23,11 @@ export const MEMORY_FILE = join(MEMORY_DIR, "decisions.md");
 /** News cache directory. */
 export const NEWS_CACHE_DIR = join(APP_DIR, "news-cache");
 
+/** Tax/regulatory context file (KR tax rules, ISA/IRP profile, auto-refreshed). */
+export const TAX_CONTEXT_FILE = join(APP_DIR, "tax-context.md");
+
+/** Max age (ms) before tax context is considered stale and auto-refreshed. */
+export const TAX_CONTEXT_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 /** Temp scratch dir (gitignored). */
 export const TMP_DIR = join(process.cwd(), ".pi", "tmp");

@@ -11,7 +11,7 @@ export interface AnalysisOutcome {
 	raw: RunResult[];
 }
 
-const ANALYST_ROLES: AgentRole[] = ["technical", "fundamental", "news"];
+const ANALYST_ROLES: AgentRole[] = ["technical", "fundamental"];
 
 function trace(msg: string): void {
 	process.stderr.write(`  • ${msg}\n`);
@@ -48,8 +48,20 @@ export async function runAnalysis(
 			reports.push(r.parsed as AgentReport);
 		}
 	}
+	// Pre-computed merged News report (browser-use, if enabled & available).
+	if (baseCtx.newsReport) {
+		reports.push(baseCtx.newsReport);
+		raw.push({
+			role: "news",
+			model: baseCtx.newsReport.model,
+			text: baseCtx.newsReport.analysis,
+			parsed: baseCtx.newsReport,
+			durationMs: 0,
+		});
+	}
 
 	// Phase 2 — adversarial bull/bear debate over N rounds.
+
 	for (let round = 1; round <= Math.max(1, config.debateRounds); round++) {
 		for (const speaker of ["bull", "bear"] as const) {
 			const ctx: AnalysisContext = {
@@ -124,7 +136,7 @@ export async function runAnalysis(
 				: undefined) as "short" | "medium" | "long" | undefined,
 			keyRisks: Array.isArray(p?.keyRisks) ? p.keyRisks.map(String) : [],
 		})),
-		strategy: String(pmParsed.strategy ?? pm.text.slice(0, 2000)),
+		strategy: String(pmParsed.strategy ?? pm.text.slice(0, 4000)),
 		cashGuidance: pmParsed.cashGuidance
 			? String(pmParsed.cashGuidance)
 			: undefined,

@@ -32,13 +32,15 @@ export async function issueAccessToken(profile: Profile): Promise<CachedToken> {
 			appsecret: profile.appSecret,
 		}),
 	});
-	if (status !== 200) throw new Error(`접근 토큰 발급 실패 (HTTP ${status}): ${text}`);
+	if (status !== 200)
+		throw new Error(`접근 토큰 발급 실패 (HTTP ${status}): ${text}`);
 	const data = JSON.parse(text) as {
 		access_token: string;
 		access_token_token_expired?: string;
 		expires_in?: number;
 	};
-	if (!data.access_token) throw new Error(`접근 토큰 발급 응답에 access_token 이 없습니다: ${text}`);
+	if (!data.access_token)
+		throw new Error(`접근 토큰 발급 응답에 access_token 이 없습니다: ${text}`);
 	const expiresAt = data.access_token_token_expired
 		? normalizeKisExpiry(data.access_token_token_expired)
 		: new Date(Date.now() + (data.expires_in ?? 86_400) * 1000).toISOString();
@@ -53,8 +55,12 @@ export async function getOrIssueToken(
 ): Promise<string> {
 	const cache = loadTokenCache();
 	const cached = cache[profileName];
-	if (!options.forceRefresh && cached && isTokenFresh(cached)) return cached.accessToken;
-	const record: CachedToken = { ...(await issueAccessToken(profile)), profile: profileName };
+	if (!options.forceRefresh && cached && isTokenFresh(cached))
+		return cached.accessToken;
+	const record: CachedToken = {
+		...(await issueAccessToken(profile)),
+		profile: profileName,
+	};
 	cache[profileName] = record;
 	saveTokenCache(cache);
 	return record.accessToken;
@@ -62,7 +68,10 @@ export async function getOrIssueToken(
 
 /** Paper-trading swaps T/J-prefix TR_IDs to their V counterpart. */
 export function resolveTrId(prodTrId: string, env: KisEnv): string {
-	if (env === "paper" && (prodTrId.startsWith("T") || prodTrId.startsWith("J"))) {
+	if (
+		env === "paper" &&
+		(prodTrId.startsWith("T") || prodTrId.startsWith("J"))
+	) {
 		return `V${prodTrId.slice(1)}`;
 	}
 	return prodTrId;
@@ -120,7 +129,9 @@ export class KisClient {
 		this.profile = opts.profile;
 	}
 
-	async call<T = unknown>(options: KisRequestOptions): Promise<KisBaseResponse<T>> {
+	async call<T = unknown>(
+		options: KisRequestOptions,
+	): Promise<KisBaseResponse<T>> {
 		await smartSleep(this.profile.env);
 
 		const trId = resolveTrId(options.trId, this.profile.env);
@@ -145,7 +156,10 @@ export class KisClient {
 			}
 		}
 
-		const init: RequestInit & { method: string } = { method: options.method, headers };
+		const init: RequestInit & { method: string } = {
+			method: options.method,
+			headers,
+		};
 		if (options.method === "POST") {
 			init.body = JSON.stringify(options.body ?? {});
 		}
@@ -159,7 +173,9 @@ export class KisClient {
 			throw new Error(`KIS 응답을 JSON 으로 파싱하지 못했습니다: ${text}`);
 		}
 		if (parsed.rt_cd && parsed.rt_cd !== "0") {
-			throw new Error(`${parsed.msg_cd ?? "KIS_ERR"}: ${parsed.msg1 ?? "알 수 없는 오류"}`);
+			throw new Error(
+				`${parsed.msg_cd ?? "KIS_ERR"}: ${parsed.msg1 ?? "알 수 없는 오류"}`,
+			);
 		}
 		return parsed;
 	}

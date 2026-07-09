@@ -4,6 +4,8 @@ import { registerAgentCommands } from "./commands/agent.js";
 import { registerMarketCommands } from "./commands/market.js";
 import { registerAccountCommands } from "./commands/account.js";
 import { registerAnalyzeCommands } from "./commands/analyze.js";
+import { registerAskCommands } from "./commands/ask.js";
+import { registerBotCommands } from "./commands/bot.js";
 import { fail } from "./output.js";
 
 const program = new Command();
@@ -20,6 +22,8 @@ registerAgentCommands(program);
 registerMarketCommands(program);
 registerAccountCommands(program);
 registerAnalyzeCommands(program);
+registerAskCommands(program);
+registerBotCommands(program);
 
 program.parseAsync(process.argv).catch((err: unknown) => {
 	fail(err instanceof Error ? err.message : String(err), 1);

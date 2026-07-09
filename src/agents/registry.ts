@@ -155,7 +155,12 @@ export async function runRole(
 	const resourceLoader = new DefaultResourceLoader({
 		cwd: process.cwd(),
 		agentDir: isolatedAgentDir,
-		systemPromptOverride: () => systemPrompt(role),
+		systemPromptOverride: () => {
+			if (role === "portfolio-manager" && ctx.userQuestion) {
+				return `You are an investment analysis synthesizer. 항상 한국어로 답변하라. 당신은 포트폴리오 매니저가 아니다. 매수/매도/트림 같은 포트폴리오 액션을 제안하지 마라. 사용자의 질문에 직접 답하라. 질문이 주가 예측이면: 예상 방향(상승/하락/횡보), 근거 지표, 예상 가격대를 제시하라. 질문이 전망이면: 구체적 전망과 시나리오를 제시하라. 질문이 세법이면: 세법 답변을 제시하라. 분석가들의 보고서를 참고하되, 최종 답변은 질문에 대한 직접적인 답이어야 한다.`;
+			}
+			return systemPrompt(role);
+		},
 	});
 	await resourceLoader.reload();
 

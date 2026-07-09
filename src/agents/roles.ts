@@ -39,6 +39,17 @@ export interface AnalysisContext {
 	}>;
 	/** Why news was unavailable (degraded mode), so the news analyst can explain it. */
 	newsReason?: string;
+	/** Pre-computed News analyst report (when news runs via browser-use merge). */
+	newsReport?: AgentReport;
+	/** Raw news items found by browser-use (for reuse / other digests). */
+	newsItems?: Array<{
+		title: string;
+		summary: string;
+		url?: string;
+		date: string;
+		region: "KR" | "US";
+		weight: { pricedIn: boolean; active: boolean; reason: string };
+	}>;
 	priorReports?: AgentReport[];
 	debateHistory?: Array<{ round: number; speaker: AgentRole; text: string }>;
 	config: AppConfig;
@@ -46,6 +57,10 @@ export interface AnalysisContext {
 	blind?: boolean;
 	/** Prior decision memory digest (same-ticker history) injected for reflection. */
 	priorDecisions?: string;
+	/** User's free-form question (for td ask). */
+	userQuestion?: string;
+	/** Tax/regulatory context (separate block, auto-refreshed). */
+	taxContext?: string;
 }
 
 /** Render a compact portfolio digest. */
@@ -61,7 +76,7 @@ function portfolioDigest(p: AggregatedPortfolio): string {
 		p.holdings
 			.map(
 				(h) =>
-					`${h.ticker}(${h.symbol}) ${h.quantity}@${h.averagePrice ?? "?"} ${h.currency}`,
+					`${h.name ?? h.ticker}(${h.ticker}) ${h.quantity}주 @${h.averagePrice ?? "?"} ${h.currency}`,
 			)
 			.join(", ") || "none";
 	return `Cash: ${cash}\nHoldings: ${holdings}\nAccounts: ${p.accounts.map((a) => `${a.broker}/${a.profile}${a.included ? "" : "❌"}`).join(", ")}`;
@@ -173,7 +188,7 @@ const BLIND_NOTE = (ctx: AnalysisContext) =>
 
 /** Build the system prompt for a role. */
 export function systemPrompt(role: AgentRole): string {
-	const common = `You are a senior investment analyst operating inside a multi-agent investment desk. You are ONE specialist on a team that will debate to a consensus. Be rigorous, evidence-based, and concise. Cite the specific metric you used (e.g. "RSI14=72 → overbought"). Use the data given; if data is missing, say so rather than guessing.`;
+	const common = `You are a senior investment analyst operating inside a multi-agent investment desk. 항상 한국어로 답변하라. 추론 과정이나 분석 단계를 나열하지 말고, 최종 결론만 간결하게 전달하라. Be rigorous, evidence-based, and concise. Cite the specific metric you used.`;
 	switch (role) {
 		case "technical":
 			return `${common} Your specialty: TECHNICAL ANALYSIS. Use every available method — trend (SMA20/50/200, EMA), momentum (RSI14, MACD/hist, rate-of-change via return windows), volatility (Bollinger Band position & width, ATR), volume, support/resistance, and chart structure from the recent candles. Identify trend direction, key levels, and momentum divergences. Translate signals into a directional view.`;
@@ -190,7 +205,7 @@ export function systemPrompt(role: AgentRole): string {
 		case "reviewer":
 			return `${common} Your specialty: ADVERSARIAL JUDGMENT REVIEW (devil's advocate). Challenge the team's synthesis for: stale data, assumptions contradicted by the snapshot, news that is actually priced-in but treated as active (or vice-versa), overnight gaps already moved, overconfidence, and missing contrary evidence. Flag specifically what would invalidate the thesis.`;
 		case "portfolio-manager":
-			return `${common} You are the PORTFOLIO MANAGER and moderator. Synthesize the analyst reports, the bull/bear debate, the risk assessment, and the judgment review into a FINAL decision for the current time and market state. For each relevant ticker give: action (buy|hold|trim|sell|watch|avoid), confidence (0-1), rationale, optional targetWeight (fraction of portfolio) and horizon, and keyRisks. Then give an overall strategy narrative + cash/FX guidance for the current session. This is READ-ONLY advice — no order execution.`;
+			return `${common} You are the FINAL SYNTHESIZER. 두 가지 모드가 있다:\n1. 포트폴리오 권고 모드: 종목별 액션(buy|hold|trim|sell|watch|avoid), 신뢰도, 근거, 핵심 리스크를 JSON으로 제시하라.\n2. 질문 답변 모드: 사용자의 질문에 직접 답하라. 포트폴리오 매매 권고가 아니다. 질문이 주가 예측이면 예측 방향과 근거를, 세법 질문이면 세법 답변을, 시장 전망이면 전망을 제시하라. 어떤 모드인지는 사용자 메시지에 명시된다. READ-ONLY — no order execution.`;
 		default:
 			return common;
 	}
@@ -201,7 +216,31 @@ export function userMessage(role: AgentRole, ctx: AnalysisContext): string {
 	const memory = ctx.priorDecisions
 		? `\n\nPRIOR DECISIONS (for reflection — do not blindly repeat):\n   ${ctx.priorDecisions}`
 		: "";
-	const head = `OBJECTIVE: ${ctx.objective === "portfolio-recommend" ? "recommend stocks to add to the portfolio" : "current-time response strategy"}\n\nMARKET STATE:\n   ${marketStateDigest(ctx)}\n\nCURRENT PORTFOLIO:\n   ${portfolioDigest(ctx.portfolio)}\n\nTICKER DATA (source of truth, fetched once):\n   ${snapshotDigest(ctx)}${BLIND_NOTE(ctx)}${memory}`;
+	const tax = ctx.taxContext
+		? `\n\n세법/규제 컨텍스트 (별도 블록 — 세금·계좌 관련 결정 시 반드시 참고):\n${ctx.taxContext}`
+		: "";
+	const conv = (ctx as unknown as { conversationHistory?: string })
+		.conversationHistory;
+	const convBlock = conv ? `\n\nPRIOR CONVERSATION:\n${conv}` : "";
+	const koreanName = `\n\nIMPORTANT: 사용자에게 결과를 전달할 때는 종목 코드(ticker)보다 해당 상품의 이름(예: 삼성전자, KODEX 미국나스닥100)을 우선 사용하라.`;
+
+	let head: string;
+
+	// Question-answering mode: put the QUESTION first, skip empty portfolio.
+	if (ctx.userQuestion) {
+		const portfolioSection =
+			ctx.portfolio.holdings.length > 0
+				? `\n\nCURRENT PORTFOLIO:\n   ${portfolioDigest(ctx.portfolio)}`
+				: "";
+		head = `사용자 질문: "${ctx.userQuestion}"\n\nOBJECTIVE: 이 질문에 직접 답변하라. 포트폴리오 권고가 목표가 아니라, 사용자의 질문에 최선의 답을 제시하는 것이 목표다.\n\nMARKET STATE:\n   ${marketStateDigest(ctx)}\n\nTICKER DATA:\n   ${snapshotDigest(ctx)}${portfolioSection}${BLIND_NOTE(ctx)}${memory}${tax}${convBlock}${koreanName}`;
+	}
+
+	// Portfolio mode (original): objective + full context.
+	const obj =
+		ctx.objective === "portfolio-recommend"
+			? "recommend stocks to add to the portfolio"
+			: "current-time response strategy";
+	head = `OBJECTIVE: ${obj}\n\nMARKET STATE:\n   ${marketStateDigest(ctx)}\n\nCURRENT PORTFOLIO:\n   ${portfolioDigest(ctx.portfolio)}\n\nTICKER DATA (source of truth, fetched once):\n   ${snapshotDigest(ctx)}${BLIND_NOTE(ctx)}${memory}${tax}${convBlock}${koreanName}`;
 
 	if (role === "news") {
 		return `${head}\n\nNEWS:\n   ${newsDigest(ctx)}\n\nProduce your news & sentiment report.\n${REPORT_FORMAT}`;
@@ -239,10 +278,10 @@ export function userMessage(role: AgentRole, ctx: AnalysisContext): string {
 		const debate = (ctx.debateHistory ?? [])
 			.map((d) => `[R${d.round} ${d.speaker}] ${d.text}`)
 			.join("\n");
-		return `${head}\n\nFINAL SYNTHESIS INPUTS:\n${reports}\n\nDEBATE:\n${debate}\n\nProduce the FINAL portfolio decision. End with a fenced JSON block EXACTLY matching:
-\`\`\`json
-{"positions":[{"ticker":"","name":"","action":"buy|hold|trim|sell|watch|avoid","confidence":0.0,"rationale":"","targetWeight":0.0,"horizon":"short|medium|long","keyRisks":[]}],"strategy":"","cashGuidance":"","warnings":[]}
-\`\`\``;
+		if (ctx.userQuestion) {
+			return `${head}\n\n분석가 보고서:\n${reports}\n\n토론:\n${debate}\n\n위 분석을 종합하여 사용자의 질문에 직접 답변하라. 포트폴리오 권고나 종목별 매수/매도 액션이 아니다. 사용자가 물어본 것에 대해 명확하고 구체적으로 답하라. 한국어로 작성하라. JSON이나 표 형식 없이 자연스러운 글로 답변하라.`;
+		}
+		return `${head}\n\nFINAL SYNTHESIS INPUTS:\n${reports}\n\nDEBATE:\n${debate}\n\nProduce the FINAL portfolio decision. End with a fenced JSON block EXACTLY matching:\n\`\`\`json\n{"positions":[{"ticker":"","name":"","action":"buy|hold|trim|sell|watch|avoid","confidence":0.0,"rationale":"","targetWeight":0.0,"horizon":"short|medium|long","keyRisks":[]}],"strategy":"","cashGuidance":"","warnings":[]}\n\`\`\``;
 	}
 
 	// technical / fundamental
@@ -259,3 +298,61 @@ export const ALL_ROLES: AgentRole[] = [
 	"reviewer",
 	"portfolio-manager",
 ];
+
+/**
+ * Merged News-analyst task for browser-use: persona + investment context +
+ * priced-in principle + JSON schema. browser-use browses, applies the
+ * priced-in rule, and returns a structured News report in one pass.
+ */
+export function newsAnalystTask(ctx: AnalysisContext): string {
+	const kr = ctx.marketState.KR;
+	const us = ctx.marketState.US;
+	const holdings =
+		ctx.portfolio.holdings
+			.map(
+				(h) =>
+					`${h.ticker} (${h.name ?? h.symbol}, ${h.market}, ${h.currency})`,
+			)
+			.join(", ") || "(none)";
+	return [
+		systemPrompt("news"),
+		"",
+		`TODAY: ${ctx.snapshot.generatedAt}`,
+		`MARKET STATE: KR ${kr?.session}${kr?.isOpen ? " (OPEN)" : " (closed)"} | US ${us?.session}${us?.isOpen ? " (OPEN)" : " (closed)"}`,
+		`HOLDINGS: ${holdings}`,
+		"",
+		"TASK: Use the browser to find the 3-8 most recent (last 7 days) market-moving news for these holdings. For Korean names, also check US overnight leaders (e.g. SOXX/SMH/MU/NVDA for Samsung/SK Hynix).",
+		"Apply the priced-in principle strictly: if the relevant market is OPEN on the news date, mark pricedIn=true (reference only); if the market is CLOSED and the news is directional, mark pricedIn=false, active=true (forward signal for the next open).",
+		ctx.blind
+			? "[BLIND/BACKTEST] Do not claim knowledge of outcomes after the snapshot date."
+			: "",
+		"",
+		"Return ONLY a single JSON object (no prose outside it) with EXACTLY this shape:",
+		"```json",
+		JSON.stringify(
+			{
+				analysis: "<your news & sentiment analysis, concise>",
+				stance: "bullish|bearish|neutral",
+				confidence: 0.0,
+				keyPoints: ["..."],
+				suggestions: ["..."],
+				newsItems: [
+					{
+						title: "",
+						summary: "",
+						url: "",
+						date: "ISO",
+						region: "KR|US",
+						pricedIn: true,
+						active: false,
+					},
+				],
+			},
+			null,
+			2,
+		),
+		"```",
+	]
+		.filter(Boolean)
+		.join("\n");
+}

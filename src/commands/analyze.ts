@@ -100,7 +100,7 @@ async function runObjective(
 	out("");
 	for (const p of rec.positions) {
 		out(
-			`• ${p.ticker} ${p.name ?? ""} → ${p.action.toUpperCase()} (conf ${(p.confidence * 100).toFixed(0)}%${p.targetWeight !== undefined ? `, target ${(p.targetWeight * 100).toFixed(1)}%` : ""}${p.horizon ? `, ${p.horizon}` : ""})`,
+			`• ${p.name ?? p.ticker} → ${p.action.toUpperCase()} (신뢰도 ${(p.confidence * 100).toFixed(0)}%${p.targetWeight !== undefined ? `, 목표 비중 ${(p.targetWeight * 100).toFixed(1)}%` : ""}${p.horizon ? `, ${p.horizon}` : ""})`,
 		);
 		if (p.rationale) out(`    ${p.rationale}`);
 		if (p.keyRisks.length) out(`    risks: ${p.keyRisks.join("; ")}`);
