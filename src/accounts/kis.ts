@@ -21,16 +21,15 @@ const OVERSEAS_CURRENCIES = ["USD"] as const;
 
 /** Candidate KRW-cash field names in the CTRP6548R `output2` summary. */
 const KRW_CASH_FIELDS = [
-	"dnca_cash", // 예수금현금 (preferred)
+	"dnca_cash", // 예수금현금 (preferred — some account types)
+	"dncl_amt", // 예수금 (standard field — CTRP6548R 실제 응답)
+	"tot_dncl_amt", // 총예수금 (includes CMA)
 	"prvs_rcdl_excc_amt", // 전일대고객예수금
 	"nxdy_excc_amt", // 익일정산금액
 ] as const;
 
-/** Candidate USD-cash field names in the overseas balance `output2` summary. */
-const OVERSEAS_CASH_FIELDS = [
-	"frcr_buy_amt_psbl_amt", // 외화매수가능금액
-	"ovrs_buy_psbl_amt", // 해외매수가능금액
-] as const;
+// Overseas USD cash now fetched via TTTS3009R (fetchOverseasBuyingPower).
+// Old OVERSEAS_CASH_FIELDS removed — TTTS3012R output2 has no buying-power field.
 
 // ---------- numeric helpers ----------
 
@@ -140,6 +139,38 @@ async function fetchDomesticAccountBalance(
 		},
 	});
 	return asSummary(res.output2);
+}
+
+/**
+ * Overseas buying power (TTTS3009R) — returns available USD cash for overseas orders.
+ * Falls back gracefully (returns undefined) if API rejects.
+ */
+async function fetchOverseasBuyingPower(
+	client: KisClient,
+	profile: Profile,
+): Promise<number | undefined> {
+	try {
+		const res = await client.call({
+			method: "GET",
+			path: "/uapi/overseas-stock/v1/trading/orderable-amount",
+			trId: "TTTS3009R",
+			query: {
+				...acct(profile),
+				OVRS_EXCG_CD: "NASD",
+				ITEM_CD: "",
+			},
+		});
+		const out = asSummary(res.output);
+		if (!out) return undefined;
+		const psbl = firstNum(out, [
+			"ovrs_ord_psbl_amt", // 해외주문가능금액 (preferred)
+			"max_buy_amt", // 최대매수금액
+			"ord_psbl_amt", // 주문가능금액
+		]);
+		return psbl;
+	} catch {
+		return undefined;
+	}
 }
 
 /** Overseas stock balance (TTTS3012R) across US exchanges + USD. */
@@ -273,13 +304,14 @@ export async function fetchKisAccount(
 			});
 		}
 
-		// Overseas holdings + (optional) USD cash.
+		// Overseas holdings + USD buying power.
 		const ovs = await fetchOverseasHoldings(client, profile);
 		for (const row of ovs.rows) {
 			const c = overseasRowToContribution(row, profileName, "USD");
 			if (c) holdings.push(c);
 		}
-		const usd = firstNum(ovs.summary ?? {}, OVERSEAS_CASH_FIELDS);
+		// USD cash: use TTTS3009R buying power API (TTTS3012R summary has no buying-power field).
+		const usd = await fetchOverseasBuyingPower(client, profile);
 		if (usd !== undefined) {
 			cash.push({
 				broker: "kis",

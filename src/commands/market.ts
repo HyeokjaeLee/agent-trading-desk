@@ -65,6 +65,11 @@ export function registerMarketCommands(root: Command): void {
 			const { tickers: expanded, proxies } = expandWithProxies(holdings);
 			for (const t of expanded) tickers.add(t);
 			tickers.add("KRW=X"); // USD/KRW exchange rate (always included)
+		// US Treasury yield proxies for macro rate collection (A안 of fetchMacroRates).
+		tickers.add("^TNX"); // 10Y
+		tickers.add("^TYX"); // 30Y
+		tickers.add("^IRX"); // 13W T-Bill
+		tickers.add("^FVX"); // 5Y
 			const snapshot = await refreshSnapshot([...tickers], {
 				period: opts.period,
 				leadingIndicators: proxies,

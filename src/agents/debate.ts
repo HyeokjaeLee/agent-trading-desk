@@ -129,14 +129,20 @@ export async function runAnalysis(
 					? Math.max(0, Math.min(1, p.confidence))
 					: 0.5,
 			rationale: String(p?.rationale ?? ""),
-			targetWeight:
-				typeof p?.targetWeight === "number" ? p.targetWeight : undefined,
+			targetWeight: (() => {
+				const v = p?.targetWeight;
+				if (typeof v !== "number" || !isFinite(v)) return undefined;
+				// Normalize: PM sometimes outputs 25 (percent) instead of 0.25.
+				// Values > 1 are treated as percentages and divided by 100.
+				if (v > 1) return v / 100;
+				return v;
+			})(),
 			horizon: (["short", "medium", "long"].includes(String(p?.horizon))
 				? String(p?.horizon)
 				: undefined) as "short" | "medium" | "long" | undefined,
 			keyRisks: Array.isArray(p?.keyRisks) ? p.keyRisks.map(String) : [],
 		})),
-		strategy: String(pmParsed.strategy ?? pm.text.slice(0, 4000)),
+		strategy: String(pmParsed.strategy ?? pm.text),
 		cashGuidance: pmParsed.cashGuidance
 			? String(pmParsed.cashGuidance)
 			: undefined,

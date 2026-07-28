@@ -18,7 +18,11 @@ import type { MarketSnapshot } from "../types.js";
 
 // Password-based whitelist. User enters password → chat ID approved permanently.
 const BOT_PASSWORD = process.env.BOT_PASSWORD ?? "";
-const APPROVED_FILE = join(homedir(), ".agent-trading-desk", "approved-chats.json");
+const APPROVED_FILE = join(
+	homedir(),
+	".agent-trading-desk",
+	"approved-chats.json",
+);
 function loadApproved(): Set<number> {
 	try {
 		if (!existsSync(APPROVED_FILE)) return new Set();
@@ -28,7 +32,13 @@ function loadApproved(): Set<number> {
 	}
 }
 function saveApproved(ids: Set<number>): void {
-	try { writeFileSync(APPROVED_FILE, JSON.stringify([...ids], null, 2), { mode: 0o600 }); } catch { /* ignore */ }
+	try {
+		writeFileSync(APPROVED_FILE, JSON.stringify([...ids], null, 2), {
+			mode: 0o600,
+		});
+	} catch {
+		/* ignore */
+	}
 }
 const approvedChats = loadApproved();
 
@@ -285,10 +295,13 @@ export async function startTelegramBot(token: string): Promise<void> {
 						await send(token, cid, "✅ 인증 완료! 이제 질문하실 수 있습니다.");
 						continue;
 					}
-					await send(token, cid, "🔒 이 봇은 비밀번호 인증이 필요합니다. 비밀번호를 입력해주세요.");
+					await send(
+						token,
+						cid,
+						"🔒 이 봇은 비밀번호 인증이 필요합니다. 비밀번호를 입력해주세요.",
+					);
 					continue;
 				}
-
 
 				const s = st(cid);
 

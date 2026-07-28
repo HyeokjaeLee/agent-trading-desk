@@ -42,7 +42,7 @@ export function saveExchange(
 	const history = loadSession(chatId);
 	history.push({
 		question,
-		answer: answer.slice(0, 2000),
+		answer,
 		timestamp: new Date().toISOString(),
 	});
 	while (history.length > MAX_HISTORY) history.shift();
@@ -57,7 +57,7 @@ export function formatConversation(history: Exchange[]): string {
 	return history
 		.map(
 			(h, i) =>
-				`[대화 ${i + 1}] 사용자: ${h.question}\n데스크: ${h.answer.slice(0, 500)}`,
+				`[대화 ${i + 1}] 사용자: ${h.question}\n데스크: ${h.answer.slice(0, 2000)}`,
 		)
 		.join("\n\n");
 }

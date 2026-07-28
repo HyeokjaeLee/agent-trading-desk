@@ -465,6 +465,8 @@ async function fetchOne(
 		let naverEPS: number | undefined;
 		let naverBPS: number | undefined;
 		let naverROE = toFloat(fin?.returnOnEquity);
+		let naverForwardPER: number | undefined;
+		let naverConsensusEps: number | undefined;
 		if (krCode && (!naverPER || !naverPBR)) {
 			try {
 				const naver = await fetchNaverFundamentals(krCode);
@@ -474,6 +476,8 @@ async function fetchOne(
 					naverEPS = naver.eps;
 					naverBPS = naver.bps;
 					naverROE = naverROE ?? naver.roe;
+					naverForwardPER = naver.forwardPer;
+					naverConsensusEps = naver.consensusEps;
 				}
 			} catch {
 				/* keep Yahoo data */
@@ -486,8 +490,10 @@ async function fetchOne(
 			price: lastClose,
 			marketCap,
 			trailingPE: naverPER,
-			forwardPE: toFloat(detail?.forwardPE) ?? toFloat(keys?.forwardPE),
-			pegRatio: toFloat(detail?.pegRatio) ?? toFloat(keys?.pegRatio),
+			// Korean stocks: use Naver consensus forward PER (추정PER) — more reliable than yfinance.
+			forwardPE: naverForwardPER ?? (krCode ? undefined : (toFloat(detail?.forwardPE) ?? toFloat(keys?.forwardPE))),
+			// yfinance PEG ratio derives from forward earnings — same reliability issue as forwardPE for KR stocks.
+			pegRatio: krCode ? undefined : (toFloat(detail?.pegRatio) ?? toFloat(keys?.pegRatio)),
 			priceToBook: naverPBR,
 			priceToSalesTrailing12Months: toFloat(
 				detail?.priceToSalesTrailing12Months,

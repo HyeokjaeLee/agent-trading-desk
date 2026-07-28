@@ -104,6 +104,12 @@ export function registerAskCommands(root: Command): void {
 			const answer = rec.strategy || "답변을 생성하지 못했습니다.";
 			saveExchange(SESSION_CHAT_ID, question, answer);
 
+			// CLI 실행 시 마지막 응답을 파일로 저장 (백그라운드 실행 후 전체 읽기용)
+			const outFile = `${process.env.HOME}/.agent-trading-desk/last-answer.md`;
+			await import("fs/promises").then((fs) =>
+				fs.writeFile(outFile, `# 질문: ${question}\n\n${answer}\n`),
+			);
+
 			if (opts.json) {
 				const payload = opts.report
 					? rec

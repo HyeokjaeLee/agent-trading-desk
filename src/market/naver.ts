@@ -15,6 +15,8 @@
 export interface NaverFundamentals {
 	symbol: string;
 	per?: number;
+	forwardPer?: number;
+	consensusEps?: number;
 	pbr?: number;
 	eps?: number;
 	bps?: number;
@@ -63,6 +65,55 @@ function extractValue(
 	return matches.length > 0 ? matches[0]?.[1] : undefined;
 }
 
+/**
+ * Extract valuation metrics from the 동종업종비교 (industry comparison) table,
+ * which shows CURRENT TTM-based PER/PBR — not stale annual data.
+ *
+ * The generic extractValue() hits the first label match, which is often in the
+ * historical 실적 table (e.g. 2023's negative PER for cyclicals). This function
+ * scopes the search to the comparison section to get the live value.
+ */
+function extractComparisonValue(
+	html: string,
+	label: string,
+): string | undefined {
+	const compIdx = html.indexOf("동종업종비교");
+	if (compIdx < 0) return undefined;
+	const section = html.slice(compIdx, compIdx + 10000);
+	const labelIdx = section.indexOf(label);
+	if (labelIdx < 0) return undefined;
+	const chunk = section.slice(labelIdx, labelIdx + 500);
+	const matches = [...chunk.matchAll(/>\s*([\d,.]+)\s*</g)];
+	for (const m of matches) {
+		const val = parseFloat(m[1].replace(/,/g, ""));
+		if (Number.isFinite(val) && val > 0) return m[1];
+	}
+	return undefined;
+}
+
+/**
+ * Extract consensus (estimated) PER/EPS from Naver's 투자정보 section.
+ * Naver shows 추정PER and 추정EPS from 증권사 컨센서스 (via 에프앤가이드).
+ * Uses stable element IDs (_cns_per, _cns_eps) rather than text matching,
+ * because "추정PER" text appears in tooltip descriptions before the actual value.
+ */
+function extractConsensusFundamentals(
+	html: string,
+): { forwardPer?: number; consensusEps?: number } {
+	const result: { forwardPer?: number; consensusEps?: number } = {};
+	const perMatch = html.match(/id="_cns_per"[^>]*>\s*([\d,.]+)\s*</);
+	const epsMatch = html.match(/id="_cns_eps"[^>]*>\s*([\d,.]+)\s*</);
+	if (perMatch) {
+		const v = parseFloat(perMatch[1].replace(/,/g, ""));
+		if (Number.isFinite(v) && v > 0) result.forwardPer = v;
+	}
+	if (epsMatch) {
+		const v = parseFloat(epsMatch[1].replace(/,/g, ""));
+		if (Number.isFinite(v) && v > 0) result.consensusEps = v;
+	}
+	return result;
+}
+
 function extractCoinfoData(html: string): Partial<NaverFundamentals> {
 	const result: Partial<NaverFundamentals> = {};
 	const findTd = (label: string): string | undefined => {
@@ -104,10 +155,11 @@ export async function fetchNaverFundamentals(
 
 		const result: NaverFundamentals = {
 			symbol: code,
-			per: parseNum(extractValue(html, "PER")),
-			pbr: parseNum(extractValue(html, "PBR")),
+			per: parseNum(extractComparisonValue(html, "PER")) ?? parseNum(extractValue(html, "PER")),
+			pbr: parseNum(extractComparisonValue(html, "PBR")) ?? parseNum(extractValue(html, "PBR")),
 			eps: parseNum(extractValue(html, "EPS")),
 			bps: parseNum(extractValue(html, "BPS")),
+			...extractConsensusFundamentals(html),
 			roe: parseNum(extractValue(html, "ROE")),
 			roa: parseNum(extractValue(html, "ROA")),
 			revenue: extractValue(html, "매출액"),

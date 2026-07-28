@@ -2,9 +2,12 @@ import { loadConfig } from "../config/app-config.js";
 import { aggregatePortfolio } from "../accounts/aggregate.js";
 import { refreshSnapshot, loadSnapshot } from "../market/snapshot.js";
 import { mapToYahoo } from "../market/ticker-map.js";
+import { getKoreanCode } from "../market/naver.js";
 import { expandWithProxies } from "../market/proxies.js";
 import { getMarketState } from "../market/market-state.js";
-import { runNewsAnalyst } from "../news/browser-use.js";
+import { runNewsWithFallback } from "../news/browser-use.js";
+import { fetchMacroRates } from "../market/macro.js";
+import { fetchInvestorFlows } from "../market/frgn.js";
 import { loadRelevantMemory } from "./memory.js";
 import { ensureTaxContextFresh } from "./tax-context.js";
 import type { AnalysisContext } from "./roles.js";
@@ -58,6 +61,8 @@ export async function buildAnalysisContext(opts: BuildContextOptions): Promise<{
 	const tickers = [
 		...new Set([...holdings.map((h) => h.ticker), ...expanded, "KRW=X"]),
 	];
+	// Rate proxy tickers (US Treasury yields) for macro interest rates.
+	tickers.push("^TNX", "^TYX", "^IRX", "^FVX");
 
 	let snapshot: MarketSnapshot | undefined;
 	if (!opts.refresh) snapshot = loadSnapshot();
@@ -83,6 +88,22 @@ export async function buildAnalysisContext(opts: BuildContextOptions): Promise<{
 	const tickersByYahoo: Record<string, (typeof snapshot.tickers)[number]> = {};
 	for (const t of snapshot.tickers) tickersByYahoo[t.ticker] = t;
 
+	// 3.5. Macro interest rates (hybrid: yfinance rate tickers + Naver/CNBC scraping).
+	const macroRates = await fetchMacroRates(tickersByYahoo);
+
+	// 3.6. Investor trading flows (외국인/기관/개인 매매동향) for Korean stocks.
+	//      td agents previously had ZERO access to this data, causing systematic
+	//      misdiagnosis of supply/demand. Fetched from Naver frgn.naver (static HTML).
+	const koreanStockEntries: Array<{ code: string; name?: string }> = [];
+	for (const h of holdings) {
+		const code = getKoreanCode(h.ticker);
+		if (code) koreanStockEntries.push({ code, name: h.name });
+	}
+	const investorFlows =
+		koreanStockEntries.length > 0
+			? await fetchInvestorFlows(koreanStockEntries)
+			: undefined;
+
 	// 4. Market state.
 	const marketState = {
 		KR: getMarketState("KR", asOf),
@@ -103,6 +124,8 @@ export async function buildAnalysisContext(opts: BuildContextOptions): Promise<{
 			: portfolio,
 		snapshot,
 		tickersByYahoo,
+		macroRates,
+		investorFlows: investorFlows && investorFlows.size > 0 ? investorFlows : undefined,
 		config,
 		blind: opts.blind ?? config.blindMode ?? false,
 		priorDecisions,
@@ -111,7 +134,7 @@ export async function buildAnalysisContext(opts: BuildContextOptions): Promise<{
 
 	// 6. Merged News analyst (browser-use: persona + context + Mimo model).
 	if (opts.fetchNews ?? config.newsEnabled) {
-		const nr = await runNewsAnalyst(ctx, config);
+		const nr = await runNewsWithFallback(ctx, config);
 		ctx.news = nr.items.length > 0 ? nr.items : undefined;
 		ctx.newsReport = nr.report;
 		if (nr.degraded) ctx.newsReason = nr.reason;

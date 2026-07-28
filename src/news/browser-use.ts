@@ -4,7 +4,8 @@ import { NEWS_CACHE_DIR } from "../config/paths.js";
 import { newsSignalWeight } from "../market/market-state.js";
 import { writeJsonFile, readJsonFile } from "../output.js";
 import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
-import { assignmentFor, type AppConfig } from "../config/app-config.js";
+import type { AppConfig } from "../config/app-config.js";
+import { collectNews, type CollectedNewsItem } from "./collector.js";
 import { newsAnalystTask, type AnalysisContext } from "../agents/roles.js";
 import type { AgentReport } from "../types.js";
 
@@ -99,14 +100,16 @@ export async function resolveBrowserUseEnv(
 ): Promise<
 	{ env: Record<string, string>; modelLabel: string } | { error: string }
 > {
-	const assignment = assignmentFor(config, "news") ?? config.defaultModel;
-	if (!assignment) return { error: "no model assigned to news role" };
+	// FORCE zai/glm-5.2 — do not read from config assignment.
+	const provider = "zai";
+	const modelId = "glm-5.2";
+	void config; // signature kept for callers; assignment is hardcoded.
 	const auth = AuthStorage.create();
 	const reg = ModelRegistry.create(auth);
-	const model = reg.find(assignment.provider, assignment.modelId);
+	const model = reg.find(provider, modelId);
 	if (!model)
 		return {
-			error: `model ${assignment.provider}/${assignment.modelId} not found`,
+			error: `model ${provider}/${modelId} not found`,
 		};
 	const api = (model as { api?: string }).api ?? "";
 	const baseUrl = (model as { baseUrl?: string }).baseUrl;
@@ -117,19 +120,19 @@ export async function resolveBrowserUseEnv(
 	].includes(api);
 	if (!isOpenAiCompat || !baseUrl) {
 		return {
-			error: `news model ${assignment.provider}/${assignment.modelId} (api=${api}) is not OpenAI-compatible; browser-use cannot use it`,
+			error: `news model ${provider}/${modelId} (api=${api}) is not OpenAI-compatible; browser-use cannot use it`,
 		};
 	}
 	const resolved = await reg.getApiKeyAndHeaders(model);
 	if (!resolved.ok || !resolved.apiKey)
 		return {
-			error: `no API key for ${assignment.provider}/${assignment.modelId}`,
+			error: `no API key for ${provider}/${modelId}`,
 		};
 	const env: Record<string, string> = {
 		OPENAI_API_KEY: resolved.apiKey,
 		OPENAI_BASE_URL: baseUrl,
 		OPENAI_API_BASE: baseUrl,
-		BROWSER_USE_LLM_MODEL: assignment.modelId,
+		BROWSER_USE_LLM_MODEL: modelId,
 		BROWSER_USE_HEADLESS: "true",
 		ANONYMIZED_TELEMETRY: "false",
 		BROWSER_USE_TELEMETRY: "false",
@@ -139,7 +142,7 @@ export async function resolveBrowserUseEnv(
 	// Auto-launch a headless Chrome with remote debugging if BU_CDP_WS is not set.
 	const cdpWs = process.env.BU_CDP_WS ?? (await ensureHeadlessChromeCdp());
 	if (cdpWs) env.BU_CDP_WS = cdpWs;
-	return { env, modelLabel: `${assignment.provider}/${assignment.modelId}` };
+	return { env, modelLabel: `${provider}/${modelId}` };
 }
 
 /** Low-level: run browser-use Agent (via dedicated venv) with CDP-connected browser + Mimo LLM. */
@@ -147,7 +150,7 @@ export async function callBrowserUseAgent(
 	task: string,
 	opts: { env?: Record<string, string>; timeoutMs?: number } = {},
 ): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
-	const timeoutMs = opts.timeoutMs ?? 240_000;
+	const timeoutMs = opts.timeoutMs ?? 1_200_000;
 	const env: Record<string, string> = {
 		...(process.env as Record<string, string>),
 		...opts.env,
@@ -220,10 +223,81 @@ export async function runNewsAnalyst(
 	const task = newsAnalystTask(ctx);
 	const res = await callBrowserUseAgent(task, {
 		env: envRes.env,
-		timeoutMs: 300_000,
+		timeoutMs: 1_200_000,
 	});
 	if (!res.ok) {
 		return { items: [], degraded: true, reason: res.error };
+	}
+	const parsed = parseNewsReport(res.text, envRes.modelLabel, ctx);
+	if (!parsed.report) {
+		return {
+			items: parsed.items,
+			degraded: true,
+			reason: "browser-use returned no parseable report",
+		};
+	}
+	cacheNews(`news-${Date.now()}`, { items: parsed.items, degraded: false });
+	return { report: parsed.report, items: parsed.items, degraded: false };
+}
+
+/** Convert a fetch-collected news item into a NewsItem (applies priced-in weighting). */
+function toNewsItem(it: CollectedNewsItem, nowIso: string): NewsItem {
+	const weight = newsSignalWeight(it.region, it.date, nowIso);
+	return {
+		title: it.title,
+		summary: it.summary,
+		url: it.url,
+		date: it.date,
+		region: it.region,
+		source: it.source,
+		weight,
+	};
+}
+
+/**
+ * Fetch-first news orchestrator: try collectNews() first, fall back to the heavy
+ * browser-use agent only when fetch yields fewer than 3 items.
+ */
+export async function runNewsWithFallback(
+	ctx: AnalysisContext,
+	config: AppConfig,
+): Promise<NewsAnalystResult> {
+	const nowIso = ctx.snapshot.generatedAt;
+	const holdings = ctx.portfolio.holdings.map((h) => ({
+		ticker: h.ticker,
+		name: h.name,
+		market: h.market,
+		symbol: h.symbol,
+	}));
+	const collected = await collectNews(holdings, { timeoutMs: 30_000 });
+
+	// Collector got enough (>=3) -> skip browser-use entirely.
+	if (collected.items.length >= 3) {
+		const items = collected.items.map((it) => toNewsItem(it, nowIso));
+		cacheNews(`news-${Date.now()}`, { items, degraded: false });
+		return { items, degraded: false };
+	}
+
+	// Fallback: browser-use with 20min timeout.
+	const envRes = await resolveBrowserUseEnv(config);
+	if ("error" in envRes) {
+		return {
+			items: [],
+			degraded: true,
+			reason: `collector: ${collected.reason ?? "insufficient items"}; browser-use: ${envRes.error}`,
+		};
+	}
+	const task = newsAnalystTask(ctx);
+	const res = await callBrowserUseAgent(task, {
+		env: envRes.env,
+		timeoutMs: 1_200_000,
+	});
+	if (!res.ok) {
+		return {
+			items: [],
+			degraded: true,
+			reason: `collector: ${collected.reason ?? "insufficient items"}; browser-use: ${res.error}`,
+		};
 	}
 	const parsed = parseNewsReport(res.text, envRes.modelLabel, ctx);
 	if (!parsed.report) {
