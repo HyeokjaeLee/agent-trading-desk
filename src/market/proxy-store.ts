@@ -29,6 +29,8 @@ export interface ProxyCategory {
 	isDefault?: boolean;
 	/** When isDefault=true, only match tickers from this market ("KR" | "US"). */
 	matchMarket?: string;
+	/** ISO timestamp of last auto-refresh (discover_proxies periodic re-check). */
+	lastRefreshedAt?: string;
 }
 
 /** The full proxy map file. */

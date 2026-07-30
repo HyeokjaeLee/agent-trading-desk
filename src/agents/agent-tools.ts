@@ -236,11 +236,21 @@ export function createDiscoverProxiesTool(getCtx: CtxGetter): ToolDefinition {
 			const { ticker, categoryDescription, suggestions } = params;
 			try {
 				const map = loadProxyMap();
-				// Skip if this ticker is already mapped to any category.
-				if (findCategory(map, ticker, undefined, undefined)) {
-					return textResult(
-						`${ticker}는 이미 proxy-map에 매핑되어 있다. 재검색을 건너뛴다.`,
-					);
+				// Skip if already mapped AND refreshed within 7 days.
+				const existingCat = findCategory(map, ticker, undefined, undefined);
+				const REFRESH_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+				if (existingCat) {
+					const lastRefresh = existingCat.lastRefreshedAt
+						? new Date(existingCat.lastRefreshedAt).getTime()
+						: 0;
+					const ageMs = Date.now() - lastRefresh;
+					if (ageMs < REFRESH_INTERVAL_MS) {
+						const daysLeft = Math.ceil((REFRESH_INTERVAL_MS - ageMs) / (24 * 60 * 60 * 1000));
+						return textResult(
+							`${ticker}는 이미 proxy-map에 매핑되어 있다 (카테고리: ${existingCat.id}). 마지막 갱신으로부터 ${Math.ceil(ageMs / (24 * 60 * 60 * 1000))}일 경과. ${daysLeft}일 후 재검색 가능.`,
+						);
+					}
+					// 7일 경과 — 기존 매핑에 새 제안 추가 (기존 것 유지)
 				}
 				const categoryId = slugify(categoryDescription) || "discovered";
 				// Validate each suggestion via yfinance search; pick the best result.
@@ -290,6 +300,9 @@ export function createDiscoverProxiesTool(getCtx: CtxGetter): ToolDefinition {
 					cat.matchTickers.push(ticker);
 				}
 				for (const d of discovered) addProxy(map, categoryId, d);
+				// Stamp the refresh time so the 7-day cooldown timer resets.
+				const refreshedCat = map.categories.find((c) => c.id === categoryId);
+				if (refreshedCat) refreshedCat.lastRefreshedAt = new Date().toISOString();
 				saveProxyMap(map);
 				reloadProxyMap(); // refresh the in-memory cache (proxies.ts cachedMap)
 				const lines = discovered.map(

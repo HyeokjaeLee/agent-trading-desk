@@ -98,4 +98,17 @@ export function registerProxyCommands(root: Command): void {
 			const cat = findCategory(map, ticker, opts.name, undefined);
 			if (cat) out(`  [matched category: ${cat.id}]`);
 		});
+
+	proxy
+		.command("refresh <categoryId>")
+		.description("reset the 7-day cooldown so discover_proxies re-checks this category on next use")
+		.action((categoryId: string) => {
+			const map = loadProxyMap();
+			const cat = map.categories.find((c) => c.id === categoryId);
+			if (!cat) fail(`category "${categoryId}" not found`, 1);
+			const before = cat.lastRefreshedAt ?? "(never)";
+			cat.lastRefreshedAt = new Date(0).toISOString(); // epoch — forces re-check
+			saveProxyMap(map);
+			out(`reset cooldown for "${categoryId}" (was: ${before}). discover_proxies will re-check on next use.`);
+		});
 }
