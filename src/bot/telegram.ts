@@ -1,4 +1,5 @@
-import { runAnalysis } from "../agents/debate.js";
+import { runOrchestrator } from "../agents/orchestrator.js";
+import { SubAgentPool } from "../agents/sub-agent-pool.js";
 import { recordDecision } from "../agents/memory.js";
 import {
 	loadSession,
@@ -176,9 +177,14 @@ function st(c: number): S {
 
 function ctxFor(question: string, conv?: string): AnalysisContext {
 	const cfg = loadConfig();
-	const snap = existsSync(SNAPSHOT_FILE)
-		? (JSON.parse(readFileSync(SNAPSHOT_FILE, "utf8")) as MarketSnapshot)
-		: undefined;
+	const snap = (() => {
+		if (!existsSync(SNAPSHOT_FILE)) return undefined;
+		try {
+			return JSON.parse(readFileSync(SNAPSHOT_FILE, "utf8")) as MarketSnapshot;
+		} catch {
+			return undefined;
+		}
+	})();
 	const tb: Record<string, MarketSnapshot["tickers"][number]> = {};
 	if (snap) for (const t of snap.tickers) tb[t.ticker] = t;
 	const c: AnalysisContext = {
@@ -211,18 +217,75 @@ function ctxFor(question: string, conv?: string): AnalysisContext {
 
 // ── Run desk + format result ──────────────────────────────────────
 
-async function runDesk(q: string, hist: Exchange[]): Promise<string> {
-	const outcome = await runAnalysis(
-		ctxFor(q, formatConversation(hist)),
-		loadConfig(),
+// Per-chat specialist pools: persist across messages so the PM can re-query a
+// specialist within a conversation. Idle pools are swept after POOL_TTL_MS.
+const POOL_TTL_MS = 30 * 60 * 1000;
+const chatPools = new Map<number, { pool: SubAgentPool; lastUsed: number }>();
+// Per-chat run chain: serialize overlapping runs so two messages can't drive
+// the same persistent specialist sessions concurrently.
+const chatRunChain = new Map<number, Promise<unknown>>();
+function poolFor(
+	chatId: number,
+	ctx: AnalysisContext,
+	config: ReturnType<typeof loadConfig>,
+): SubAgentPool {
+	let entry = chatPools.get(chatId);
+	if (!entry) {
+		entry = { pool: new SubAgentPool(ctx, config), lastUsed: Date.now() };
+		chatPools.set(chatId, entry);
+	}
+	entry.lastUsed = Date.now();
+	return entry.pool;
+}
+// Sweep idle pools so abandoned chats don't leak sessions.
+setInterval(
+	() => {
+		const now = Date.now();
+		for (const [id, e] of chatPools) {
+			if (now - e.lastUsed > POOL_TTL_MS) {
+				e.pool.dispose();
+				chatPools.delete(id);
+			}
+		}
+	},
+	5 * 60 * 1000,
+).unref?.();
+
+async function runDesk(
+	q: string,
+	hist: Exchange[],
+	chatId: number,
+): Promise<string> {
+	const run = async (): Promise<string> => {
+		const ctx = ctxFor(q, formatConversation(hist));
+		const config = loadConfig();
+		// PM is fresh per message (today's date); the specialist POOL persists so the
+		// PM can re-query specialists across this conversation's messages.
+		const pool = poolFor(chatId, ctx, config);
+		pool.updateContext(ctx); // fresh snapshot/date/question per message; sessions persist
+		const outcome = await runOrchestrator(ctx, config, {
+			pool,
+			disposePool: false,
+		});
+		recordDecision(outcome.recommendation);
+		return (
+			outcome.text ||
+			outcome.recommendation.strategy ||
+			outcome.recommendation.cashGuidance ||
+			"답변을 생성하지 못했습니다."
+		);
+	};
+	// Serialize per chat: chain onto any in-flight run for this conversation.
+	const prev = chatRunChain.get(chatId) ?? Promise.resolve();
+	const next = prev.then(run, run);
+	chatRunChain.set(
+		chatId,
+		next.then(
+			() => undefined,
+			() => undefined,
+		),
 	);
-	recordDecision(outcome.recommendation);
-	// Bot = Q&A mode: deliver ONLY the PM's full answer. No positions table, no warnings.
-	return (
-		outcome.recommendation.strategy ||
-		outcome.recommendation.cashGuidance ||
-		"답변을 생성하지 못했습니다."
-	);
+	return next;
 }
 
 // ── Process: typing loop → result ─────────────────────────────────
@@ -250,7 +313,7 @@ async function processChat(t: string, c: number): Promise<void> {
 			if (desc)
 				q = `[사용자가 이미지 전송. 비전 분석:\n${desc.slice(0, 800)}]\n\n${q || "이 차트를 분석해줘."}`;
 		}
-		const answer = await runDesk(q || "투자 분석을 해줘", hist);
+		const answer = await runDesk(q || "투자 분석을 해줘", hist, c);
 		clearInterval(ti);
 		if (s.runId !== my) return; // superseded
 		await send(t, c, answer);

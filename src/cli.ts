@@ -8,12 +8,18 @@ import { registerAskCommands } from "./commands/ask.js";
 import { registerBotCommands } from "./commands/bot.js";
 import { fail } from "./output.js";
 
+// Prevent SIGPIPE from killing the process when stdout is piped in background mode.
+// Without this, large stdout writes (yfinance data, agent output) to a closed/buffered
+// pipe raise SIGPIPE → process dies silently after ~15-20s.
+process.stdout?.on?.("error", () => {});
+process.stderr?.on?.("error", () => {});
+
 const program = new Command();
 
 program
 	.name("td")
 	.description(
-		"agent-trading-desk — multi-agent investment CLI. Aggregates KIS + Toss accounts, pulls PBR/PER/PSR/PCR + charts from yfinance (single source of truth), and runs a debating team of investment agents (technical, fundamental, news, bull/bear, risk, reviewer, portfolio-manager) to a consensus. READ-ONLY: never places orders.",
+		"agent-trading-desk — multi-agent investment CLI. Aggregates KIS + Toss accounts, pulls PBR/PER/PSR/PCR + charts from yfinance (single source of truth), and runs a PM-orchestrated team of investment agents (the portfolio-manager delegates to technical/fundamental/news/bull-bear/risk/reviewer specialists, in parallel) to a consensus. READ-ONLY: never places orders.",
 	)
 	.version("0.1.0");
 

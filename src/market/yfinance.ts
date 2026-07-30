@@ -21,6 +21,9 @@ export interface FetchOptions {
 	period?: string;
 	/** Bar interval, e.g. "1d". Defaults to "1d". */
 	interval?: string;
+	/** Cap the chart at this instant (ISO) for backtests. OHLCV after this date
+	 *  is excluded so the snapshot is genuinely historical, not relabeled. */
+	asOf?: string;
 }
 
 /** A single OHLCV bar from the bridge. */
@@ -107,7 +110,13 @@ export interface BridgeOutput {
 // yahoo-finance2 client (single shared instance).
 // ---------------------------------------------------------------------------
 
-const yahoo = new YahooFinance({ suppressNotices: ["yahooSurvey"] });
+const yahoo = new YahooFinance({
+	suppressNotices: ["yahooSurvey"],
+	validation: {
+		logErrors: false, // Suppress ^IRX/^TNX index ticker validation noise (floods stdout → SIGPIPE in background mode)
+		logOptionsErrors: false,
+	},
+});
 
 const QUOTE_MODULES = [
 	"summaryDetail",
@@ -160,10 +169,10 @@ const DAY_MS = 86_400_000;
  * Convert a yfinance-style period string ("1y", "6mo", "5d", "ytd", ...) into a
  * start Date for the chart call. Unknown strings default to one year.
  */
-function periodToStartDate(period: string): Date {
-	const now = Date.now();
+function periodToStartDate(period: string, ref?: Date): Date {
+	const now = (ref ?? new Date()).getTime();
 	if (period === "ytd") {
-		const d = new Date();
+		const d = new Date(ref ?? new Date());
 		d.setMonth(0, 1);
 		d.setHours(0, 0, 0, 0);
 		return d;
@@ -383,12 +392,15 @@ export async function fetchTickers(
 ): Promise<BridgeOutput> {
 	const period = opts?.period ?? "1y";
 	const interval = opts?.interval ?? "1d";
-	const period1 = periodToStartDate(period);
+	const period2 = opts?.asOf ? new Date(opts.asOf) : undefined;
+	// Anchor the lookback window to the as-of instant (not real now) so a backtest
+	// fetches the correct historical window (incl. ytd = Jan 1 of the as-of year).
+	const period1 = periodToStartDate(period, period2);
 	const chartInterval = resolveInterval(interval);
 
 	const results: BridgeTicker[] = [];
 	for (const ticker of tickers) {
-		results.push(await fetchOne(ticker, period1, chartInterval));
+		results.push(await fetchOne(ticker, period1, chartInterval, period2));
 	}
 	return { yfinanceVersion: "yahoo-finance2", tickers: results };
 }
@@ -398,12 +410,16 @@ async function fetchOne(
 	ticker: string,
 	period1: Date,
 	interval: ChartInterval,
+	period2?: Date,
 ): Promise<BridgeTicker> {
 	const out: BridgeTicker = { ticker };
 	try {
+		const chartOpts = period2
+			? { period1, period2, interval, return: "array" as const }
+			: { period1, interval, return: "array" as const };
 		const [summary, chart] = await Promise.all([
 			yahoo.quoteSummary(ticker, { modules: [...QUOTE_MODULES] }),
-			yahoo.chart(ticker, { period1, interval, return: "array" }),
+			yahoo.chart(ticker, chartOpts),
 		]);
 
 		const price = summary.price;
@@ -448,7 +464,11 @@ async function fetchOne(
 			priceToCashflow = marketCap / Math.abs(freeCashflow);
 		}
 
-		const currentPrice = toFloat(price?.regularMarketPrice) ?? lastClose;
+		// Historical mode: the capped chart close IS the price at the as-of instant;
+		// regularMarketPrice would leak the current live quote into a backtest.
+		const currentPrice = period2
+			? lastClose
+			: (toFloat(price?.regularMarketPrice) ?? lastClose);
 		const name = firstString(price?.longName, price?.shortName);
 
 		out.name = name;
@@ -466,7 +486,6 @@ async function fetchOne(
 		let naverBPS: number | undefined;
 		let naverROE = toFloat(fin?.returnOnEquity);
 		let naverForwardPER: number | undefined;
-		let naverConsensusEps: number | undefined;
 		if (krCode && (!naverPER || !naverPBR)) {
 			try {
 				const naver = await fetchNaverFundamentals(krCode);
@@ -477,7 +496,6 @@ async function fetchOne(
 					naverBPS = naver.bps;
 					naverROE = naverROE ?? naver.roe;
 					naverForwardPER = naver.forwardPer;
-					naverConsensusEps = naver.consensusEps;
 				}
 			} catch {
 				/* keep Yahoo data */
@@ -491,9 +509,15 @@ async function fetchOne(
 			marketCap,
 			trailingPE: naverPER,
 			// Korean stocks: use Naver consensus forward PER (추정PER) — more reliable than yfinance.
-			forwardPE: naverForwardPER ?? (krCode ? undefined : (toFloat(detail?.forwardPE) ?? toFloat(keys?.forwardPE))),
+			forwardPE:
+				naverForwardPER ??
+				(krCode
+					? undefined
+					: (toFloat(detail?.forwardPE) ?? toFloat(keys?.forwardPE))),
 			// yfinance PEG ratio derives from forward earnings — same reliability issue as forwardPE for KR stocks.
-			pegRatio: krCode ? undefined : (toFloat(detail?.pegRatio) ?? toFloat(keys?.pegRatio)),
+			pegRatio: krCode
+				? undefined
+				: (toFloat(detail?.pegRatio) ?? toFloat(keys?.pegRatio)),
 			priceToBook: naverPBR,
 			priceToSalesTrailing12Months: toFloat(
 				detail?.priceToSalesTrailing12Months,

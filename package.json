@@ -1,7 +1,7 @@
 {
   "name": "agent-trading-desk",
   "version": "0.1.0",
-  "description": "Agent-friendly multi-agent investment CLI. Aggregates KIS + Toss accounts, pulls PBR/PER/PSR/PCR + charts from yfinance, runs specialist investment agents that debate to a consensus portfolio/strategy.",
+  "description": "Agent-friendly multi-agent investment CLI. PM-orchestrated: the portfolio-manager delegates to specialist agents (technical, fundamental, news, bull/bear, risk, reviewer) in parallel and synthesizes a consensus. Aggregates KIS + Toss accounts (read-only), pulls PBR/PER/PSR/PCR + charts from yfinance (single source of truth).",
   "license": "MIT",
   "type": "module",
   "bin": {
@@ -18,6 +18,8 @@
     "dev": "tsup --watch",
     "start": "bun run src/cli.ts",
     "typecheck": "tsc --noEmit",
+    "test": "bun run src/test/data-lock.ts",
+    "test:e2e": "TD_E2E_LIVE=1 bun run src/test/data-lock.ts",
     "lint": "tsc --noEmit"
   },
   "dependencies": {

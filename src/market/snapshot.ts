@@ -52,6 +52,7 @@ export async function refreshSnapshot(
 	const raw = await fetchTickers(tickers, {
 		period: opts?.period,
 		interval: opts?.interval,
+		asOf: opts?.asOf,
 	});
 	const asOf = opts?.asOf ?? new Date().toISOString();
 

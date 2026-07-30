@@ -1,5 +1,5 @@
 import type { Command } from "commander";
-import { runAnalysis } from "../agents/debate.js";
+import { runOrchestrator } from "../agents/orchestrator.js";
 import { recordDecision } from "../agents/memory.js";
 import { ROLE_LABELS, type AnalysisContext } from "../agents/roles.js";
 import { ensureTaxContextFresh } from "../agents/tax-context.js";
@@ -14,14 +14,13 @@ import { out, outputJson } from "../output.js";
 import type { MarketSnapshot, AggregatedPortfolio } from "../types.js";
 
 /**
- * td ask — PM 주도 lazy-fetch 구조.
+ * td ask — PM 주도 오케스트레이터.
  *
- * 1. 세법/ISA/IRP: 30일 체크 → 갱신 시 프롬프트 주입
- * 2. 대화 10분 경과: 신선하지 않음 프롬프트 주입
- * 3. 빈 tickersByYahoo 시작 → PM이 refresh_market_data 도구로 필요 종목 fetch
- * 4. PM이 fetch한 데이터를 sub-agents가 상속 (참조 공유)
- * 4. PM이 fetch한 데이터를 sub-agents가 상속 (참조 공유)
- * 5. CLI에서는 계좌 접근 허용 (get_portfolio 도구) — 텔레그램 봇은 차단
+ * PM이 메인 에이전트로 사용자 질문을 받아, 필요한 전문가 서브에이전트에게
+ * 작업을 위임(consult_specialist / consult_specialists 병렬)하고 보고를 종합해 답한다.
+ * 전문가 세션은 대화 중 유지되어 PM이 재질문할 수 있다. 빈 데이터로 시작해
+ * PM/전문가가 refresh_market_data 도구로 필요 종목을 온디맨드 패칭한다.
+ * CLI에서는 계좌 접근 허용 (get_portfolio 도구) — 텔레그램 봇은 차단.
  */
 
 const SESSION_CHAT_ID = 0; // CLI 단일 세션
@@ -96,12 +95,15 @@ export function registerAskCommands(root: Command): void {
 			}
 
 			// 4. 에이전트 토론 실행 (PM이 refresh_market_data 도구로 데이터 패칭).
-			const outcome = await runAnalysis(ctx, ctx.config);
+			const outcome = await runOrchestrator(ctx, ctx.config);
 			recordDecision(outcome.recommendation);
 			const rec = outcome.recommendation;
 
 			// 5. 결과 저장.
-			const answer = rec.strategy || "답변을 생성하지 못했습니다.";
+			const answer =
+				outcome.text ||
+				outcome.recommendation.strategy ||
+				"답변을 생성하지 못했습니다.";
 			saveExchange(SESSION_CHAT_ID, question, answer);
 
 			// CLI 실행 시 마지막 응답을 파일로 저장 (백그라운드 실행 후 전체 읽기용)

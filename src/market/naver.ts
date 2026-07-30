@@ -85,7 +85,9 @@ function extractComparisonValue(
 	const chunk = section.slice(labelIdx, labelIdx + 500);
 	const matches = [...chunk.matchAll(/>\s*([\d,.]+)\s*</g)];
 	for (const m of matches) {
-		const val = parseFloat(m[1].replace(/,/g, ""));
+		const g = m[1];
+		if (!g) continue;
+		const val = parseFloat(g.replace(/,/g, ""));
 		if (Number.isFinite(val) && val > 0) return m[1];
 	}
 	return undefined;
@@ -97,19 +99,26 @@ function extractComparisonValue(
  * Uses stable element IDs (_cns_per, _cns_eps) rather than text matching,
  * because "추정PER" text appears in tooltip descriptions before the actual value.
  */
-function extractConsensusFundamentals(
-	html: string,
-): { forwardPer?: number; consensusEps?: number } {
+function extractConsensusFundamentals(html: string): {
+	forwardPer?: number;
+	consensusEps?: number;
+} {
 	const result: { forwardPer?: number; consensusEps?: number } = {};
 	const perMatch = html.match(/id="_cns_per"[^>]*>\s*([\d,.]+)\s*</);
 	const epsMatch = html.match(/id="_cns_eps"[^>]*>\s*([\d,.]+)\s*</);
 	if (perMatch) {
-		const v = parseFloat(perMatch[1].replace(/,/g, ""));
-		if (Number.isFinite(v) && v > 0) result.forwardPer = v;
+		const g = perMatch[1];
+		if (g) {
+			const v = parseFloat(g.replace(/,/g, ""));
+			if (Number.isFinite(v) && v > 0) result.forwardPer = v;
+		}
 	}
 	if (epsMatch) {
-		const v = parseFloat(epsMatch[1].replace(/,/g, ""));
-		if (Number.isFinite(v) && v > 0) result.consensusEps = v;
+		const g = epsMatch[1];
+		if (g) {
+			const v = parseFloat(g.replace(/,/g, ""));
+			if (Number.isFinite(v) && v > 0) result.consensusEps = v;
+		}
 	}
 	return result;
 }
@@ -155,8 +164,12 @@ export async function fetchNaverFundamentals(
 
 		const result: NaverFundamentals = {
 			symbol: code,
-			per: parseNum(extractComparisonValue(html, "PER")) ?? parseNum(extractValue(html, "PER")),
-			pbr: parseNum(extractComparisonValue(html, "PBR")) ?? parseNum(extractValue(html, "PBR")),
+			per:
+				parseNum(extractComparisonValue(html, "PER")) ??
+				parseNum(extractValue(html, "PER")),
+			pbr:
+				parseNum(extractComparisonValue(html, "PBR")) ??
+				parseNum(extractValue(html, "PBR")),
 			eps: parseNum(extractValue(html, "EPS")),
 			bps: parseNum(extractValue(html, "BPS")),
 			...extractConsensusFundamentals(html),

@@ -43,6 +43,7 @@ export {
 	ROLE_LABELS,
 	systemPrompt,
 	userMessage,
+	type AnalysisContext,
 } from "./agents/roles.js";
 export {
 	runRole,
@@ -51,6 +52,15 @@ export {
 	type RunResult,
 } from "./agents/registry.js";
 export { runAnalysis, type AnalysisOutcome } from "./agents/debate.js";
+export {
+	runOrchestrator,
+	type OrchestratorOutcome,
+	SPECIALIST_ROLES,
+} from "./agents/orchestrator.js";
+export { SubAgentPool } from "./agents/sub-agent-pool.js";
+export { createRoleSession, runSessionTurn } from "./agents/session-factory.js";
+export { normalizeRecommendation } from "./agents/registry.js";
+export { kstClock, type ClockInfo } from "./agents/now.js";
 export {
 	buildAnalysisContext,
 	type BuildContextOptions,

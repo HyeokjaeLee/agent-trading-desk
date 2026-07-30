@@ -30,51 +30,68 @@ export interface BuildContextOptions {
 	period?: string;
 	/** Skip portfolio data in context (for td ask — focus on question, not holdings). */
 	skipPortfolio?: boolean;
+	/** Offline mode: skip all live network fetches (macro/news/tax) and lock
+	 *  agents to the cached snapshot. For backtests / controlled E2E. */
+	offline?: boolean;
 }
 
 /** Assemble the full AnalysisContext: portfolio + snapshot (source of truth) + news + memory. */
-export async function buildAnalysisContext(opts: BuildContextOptions): Promise<{
-	ctx: AnalysisContext;
-	portfolio: AggregatedPortfolio;
-	snapshot: MarketSnapshot;
-}> {
-	const config = loadConfig();
-	const asOf = config.asOfDate ?? opts.asOf;
+type HoldingRef = { ticker: string; name?: string };
+type Proxies = Record<
+	string,
+	Array<{ ticker: string; name: string; relation: string }>
+>;
 
-	if (config.accounts.length === 0) {
-		fail(
-			"No accounts enabled. Run: td auth account enable <broker> <profile>",
-			2,
-		);
-	}
-
-	// 1. READ-ONLY portfolio aggregation.
-	const portfolio = await aggregatePortfolio(config.accounts, { asOf });
-
-	// 2. Source-of-truth snapshot (fetched ONCE). Expand Korean holdings with US
-	//    leading-indicator proxies (overnight forward signals for the KR open).
-	const holdings: Array<{ ticker: string; name?: string }> =
-		portfolio.holdings.map((h) => ({ ticker: h.ticker, name: h.name }));
-	for (const raw of opts.symbols ?? [])
+/** Expand portfolio + raw symbols into the full ticker set + US leading proxies. */
+function resolveTickers(
+	portfolio: AggregatedPortfolio,
+	rawSymbols: string[] | undefined,
+): { holdings: HoldingRef[]; tickers: string[]; proxies: Proxies } {
+	const holdings: HoldingRef[] = portfolio.holdings.map((h) => ({
+		ticker: h.ticker,
+		name: h.name,
+	}));
+	for (const raw of rawSymbols ?? [])
 		holdings.push({ ticker: mapToYahoo(raw).ticker });
 	const { tickers: expanded, proxies } = expandWithProxies(holdings);
 	const tickers = [
 		...new Set([...holdings.map((h) => h.ticker), ...expanded, "KRW=X"]),
 	];
-	// Rate proxy tickers (US Treasury yields) for macro interest rates.
+	// US Treasury yield proxies for macro interest rates.
 	tickers.push("^TNX", "^TYX", "^IRX", "^FVX");
+	return { holdings, tickers, proxies };
+}
 
-	let snapshot: MarketSnapshot | undefined;
-	if (!opts.refresh) snapshot = loadSnapshot();
-	// Refresh if there is no cache OR any requested ticker (+proxies) is missing
-	// from the cached snapshot, so --symbols NEWTICKER is never silently dropped.
+/** Load the cached snapshot (offline) or refresh live, enforcing the historical cutoff
+ *  and offline integrity. Never fetches when offline. */
+async function resolveSnapshot(
+	opts: BuildContextOptions,
+	tickers: string[],
+	proxies: Proxies,
+	asOf: string | undefined,
+	offline: boolean,
+): Promise<MarketSnapshot> {
+	let snapshot: MarketSnapshot | undefined = opts.refresh
+		? undefined
+		: loadSnapshot();
 	const cached = new Set((snapshot?.tickers ?? []).map((t) => t.ticker));
-	const snapAgeMs = snapshot
-		? Date.now() - new Date(snapshot.generatedAt).getTime()
-		: Infinity;
-	const tooOld = snapAgeMs > 10 * 60 * 1000;
-	const stale = !snapshot || tooOld || tickers.some((t) => !cached.has(t));
-	if (stale) {
+	// Historical cutoff: a cache newer than asOf would let a backtest see the future.
+	if (snapshot && asOf && new Date(snapshot.generatedAt) > new Date(asOf))
+		fail(
+			`Cached snapshot (${snapshot.generatedAt}) is NEWER than --as-of ${asOf}. Backtest needs a snapshot at or before the as-of date.`,
+			2,
+		);
+	// Offline integrity: a locked backtest must have every requested ticker cached.
+	if (offline && snapshot && tickers.some((t) => !cached.has(t)))
+		fail(
+			`Offline mode: requested tickers missing from cached snapshot: ${tickers.filter((t) => !cached.has(t)).join(", ")}. Run \`td market refresh --symbols ...\` first.`,
+			2,
+		);
+	const stale =
+		!snapshot ||
+		Date.now() - new Date(snapshot.generatedAt).getTime() > 10 * 60 * 1000 ||
+		tickers.some((t) => !cached.has(t));
+	if (stale && !offline) {
 		if (tickers.length === 0)
 			fail("No tickers to analyze (no holdings and no --symbols).", 2);
 		snapshot = await refreshSnapshot(tickers, {
@@ -83,17 +100,29 @@ export async function buildAnalysisContext(opts: BuildContextOptions): Promise<{
 			leadingIndicators: proxies,
 		});
 	}
-	if (!snapshot) fail("snapshot unavailable after refresh", 1);
+	if (!snapshot)
+		fail(
+			offline
+				? "Offline/backtest mode requires a cached snapshot. Run `td market refresh` first."
+				: "snapshot unavailable after refresh",
+			1,
+		);
+	return snapshot;
+}
 
-	const tickersByYahoo: Record<string, (typeof snapshot.tickers)[number]> = {};
-	for (const t of snapshot.tickers) tickersByYahoo[t.ticker] = t;
-
-	// 3.5. Macro interest rates (hybrid: yfinance rate tickers + Naver/CNBC scraping).
-	const macroRates = await fetchMacroRates(tickersByYahoo);
-
-	// 3.6. Investor trading flows (외국인/기관/개인 매매동향) for Korean stocks.
-	//      td agents previously had ZERO access to this data, causing systematic
-	//      misdiagnosis of supply/demand. Fetched from Naver frgn.naver (static HTML).
+/** Macro rates, investor flows, tax context — all skipped in offline mode (live web). */
+async function fetchAncillary(
+	holdings: HoldingRef[],
+	tickersByYahoo: Record<string, unknown>,
+	offline: boolean,
+) {
+	if (offline)
+		return {
+			macroRates: undefined,
+			investorFlows: undefined,
+			taxContext: undefined,
+		};
+	const macroRates = await fetchMacroRates(tickersByYahoo as never);
 	const koreanStockEntries: Array<{ code: string; name?: string }> = [];
 	for (const h of holdings) {
 		const code = getKoreanCode(h.ticker);
@@ -103,37 +132,84 @@ export async function buildAnalysisContext(opts: BuildContextOptions): Promise<{
 		koreanStockEntries.length > 0
 			? await fetchInvestorFlows(koreanStockEntries)
 			: undefined;
-
-	// 4. Market state.
-	const marketState = {
-		KR: getMarketState("KR", asOf),
-		US: getMarketState("US", asOf),
-	};
-
-	// 5. Tax/regulatory context (auto-refreshed if stale).
 	const { context: taxContext } = await ensureTaxContextFresh();
+	return { macroRates, investorFlows, taxContext };
+}
 
-	// 6. Decision memory.
-	const priorDecisions = loadRelevantMemory(tickers);
+/** Assemble the full AnalysisContext: portfolio + snapshot + ancillary + memory. */
+export async function buildAnalysisContext(
+	opts: BuildContextOptions,
+): Promise<{
+	ctx: AnalysisContext;
+	portfolio: AggregatedPortfolio;
+	snapshot: MarketSnapshot;
+}> {
+	const config = loadConfig();
+	const asOf = config.asOfDate ?? opts.asOf;
+	const historical = Boolean(asOf);
+	// Historical/blind mode ALWAYS locks the network — it cannot be bypassed by an explicit opts.offline:false.
+	const offline =
+		historical ||
+		(opts.blind ?? false) ||
+		(config.blindMode ?? false) ||
+		(opts.offline ?? false);
+
+	if (!offline && config.accounts.length === 0)
+		fail(
+			"No accounts enabled. Run: td auth account enable <broker> <profile>",
+			2,
+		);
+
+	// Portfolio aggregation is live (broker API); skipped offline.
+	const portfolio = offline
+		? {
+				asOf: asOf ?? new Date().toISOString(),
+				cash: [],
+				holdings: [],
+				accounts: [],
+			}
+		: await aggregatePortfolio(config.accounts, { asOf });
+
+	const { holdings, tickers, proxies } = resolveTickers(
+		portfolio,
+		opts.symbols,
+	);
+	const snapshot = await resolveSnapshot(opts, tickers, proxies, asOf, offline);
+
+	const tickersByYahoo: Record<string, (typeof snapshot.tickers)[number]> = {};
+	for (const t of snapshot.tickers) tickersByYahoo[t.ticker] = t;
+
+	const { macroRates, investorFlows, taxContext } = await fetchAncillary(
+		holdings,
+		tickersByYahoo,
+		offline,
+	);
 
 	const ctx: AnalysisContext = {
 		objective: opts.objective,
-		marketState,
+		marketState: {
+			KR: getMarketState("KR", asOf),
+			US: getMarketState("US", asOf),
+		},
 		portfolio: opts.skipPortfolio
 			? { asOf: portfolio.asOf, cash: [], holdings: [], accounts: [] }
 			: portfolio,
 		snapshot,
 		tickersByYahoo,
 		macroRates,
-		investorFlows: investorFlows && investorFlows.size > 0 ? investorFlows : undefined,
+		investorFlows:
+			investorFlows && investorFlows.size > 0 ? investorFlows : undefined,
 		config,
-		blind: opts.blind ?? config.blindMode ?? false,
-		priorDecisions,
+		// Historical mode is inherently a backtest — agents must get the BLIND "no post-cutoff knowledge" note.
+		blind: (opts.blind ?? config.blindMode ?? false) || offline,
+		offline,
+		now: offline || opts.blind ? new Date(asOf ?? Date.now()) : undefined,
+		// Skip decision memory in backtest mode — future decisions must not leak into a locked prompt.
+		priorDecisions: offline ? undefined : loadRelevantMemory(tickers),
 		taxContext,
 	};
 
-	// 6. Merged News analyst (browser-use: persona + context + Mimo model).
-	if (opts.fetchNews ?? config.newsEnabled) {
+	if (!offline && (opts.fetchNews ?? config.newsEnabled)) {
 		const nr = await runNewsWithFallback(ctx, config);
 		ctx.news = nr.items.length > 0 ? nr.items : undefined;
 		ctx.newsReport = nr.report;

@@ -11,6 +11,7 @@ import type {
 import type { AppConfig } from "../config/app-config.js";
 import type { MacroSnapshot } from "../market/macro.js";
 import type { InvestorFlowData } from "../market/frgn.js";
+import { kstClock } from "./now.js";
 
 export const ROLE_LABELS: Record<AgentRole, string> = {
 	technical: "Technical Analyst",
@@ -69,6 +70,11 @@ export interface AnalysisContext {
 	macroRates?: MacroSnapshot;
 	/** Foreign/institutional investor trading flows (Korean stocks only). */
 	investorFlows?: Map<string, InvestorFlowData>;
+	/** Effective clock. Locked to a past instant for backtests / E2E data-lock tests. */
+	now?: Date;
+	/** Offline mode: block all live network fetches (refresh_market_data refuses
+	 * and returns the locked snapshot). Used by backtest/E2E to control external access. */
+	offline?: boolean;
 }
 
 /**
@@ -76,18 +82,25 @@ export interface AnalysisContext {
  * ultra-short-bond ETFs, and other near-zero-volatility holdings that
  * function as cash for portfolio-rebalancing purposes.
  */
-function isCashEquivalentHolding(h: { name?: string; ticker: string }): boolean {
+function isCashEquivalentHolding(h: {
+	name?: string;
+	ticker: string;
+}): boolean {
 	const name = h.name ?? "";
 	// Korean market: 머니마켓, 초단기금융, 단기금융, 초단기채권 ETFs track
 	// KOFR / CD91 / overnight rates — NAV barely moves, effectively cash.
 	// US market: BIL, SGOV, MINT, JPST, ICSB and similar ultra-short Treasury
 	// or short-term bond ETFs.
-	return /머니마켓|초단기금융|단기금융|초단기채|초기채|현금성|초단기채권/i.test(name)
-		|| /^(BIL|SGOV|MINT|JPST|ICSB|GFLN|YNCH|ULST|BIL\.TO|CMR\.TO)$/i.test(h.ticker);
+	return (
+		/머니마켓|초단기금융|단기금융|초단기채|초기채|현금성|초단기채권/i.test(
+			name,
+		) ||
+		/^(BIL|SGOV|MINT|JPST|ICSB|GFLN|YNCH|ULST|BIL\.TO|CMR\.TO)$/i.test(h.ticker)
+	);
 }
 
 /** Render a compact portfolio digest. */
-function portfolioDigest(p: AggregatedPortfolio): string {
+export function portfolioDigest(p: AggregatedPortfolio): string {
 	const cash =
 		p.cash
 			.map(
@@ -156,14 +169,19 @@ function fxDigest(ctx: AnalysisContext): string {
 /** Render macro interest-rate indicators (KR bonds + US Treasuries) with cross-validation flags. */
 function macroRatesDigest(ctx: AnalysisContext): string {
 	if (!ctx.macroRates || ctx.macroRates.rates.length === 0) return "";
-	const lines = ctx.macroRates.rates.map((r) =>
-		`${r.name}: ${r.value.toFixed(3)}% (${r.changeBp >= 0 ? "+" : ""}${r.changeBp.toFixed(0)}bp, ${r.source})`,
+	const lines = ctx.macroRates.rates.map(
+		(r) =>
+			`${r.name}: ${r.value.toFixed(3)}% (${r.changeBp >= 0 ? "+" : ""}${r.changeBp.toFixed(0)}bp, ${r.source})`,
 	);
-	const discrepancies = ctx.macroRates.discrepancies.length > 0
-		? `\n   ⚠ 교차검증 차이: ${ctx.macroRates.discrepancies.map((d) =>
-				`${d.name} A=${d.aValue.toFixed(3)}% B=${d.bValue.toFixed(3)}% (${d.diffBp.toFixed(1)}bp)`,
-			).join(", ")}`
-		: "";
+	const discrepancies =
+		ctx.macroRates.discrepancies.length > 0
+			? `\n   ⚠ 교차검증 차이: ${ctx.macroRates.discrepancies
+					.map(
+						(d) =>
+							`${d.name} A=${d.aValue.toFixed(3)}% B=${d.bValue.toFixed(3)}% (${d.diffBp.toFixed(1)}bp)`,
+					)
+					.join(", ")}`
+			: "";
 	return `금리/거시 지표:\n   ${lines.join("\n   ")}${discrepancies}`;
 }
 
@@ -219,6 +237,19 @@ function tickerDigest(t: TickerSnapshot): string {
 		`ret 1d/5d/20d/60d=${fv(tc.return1d)}/${fv(tc.return5d)}/${fv(tc.return20d)}/${fv(tc.return60d)}`,
 		`S/R=${fv(tc.support)}/${fv(tc.resistance)}`,
 	];
+	// Attach recent OHLC candles so agents can see intraday lows/highs
+	// (e.g. whether price penetrated SMA200 during the session).
+	const candles = t.technicals?.recent ?? [];
+	if (candles.length > 0) {
+		const last10 = candles.slice(-10);
+		const candleStr = last10
+			.map((c) => {
+				const d = c.date?.slice(5, 10);
+				return `${d}:O=${fv(c.open)}H=${fv(c.high)}L=${fv(c.low)}C=${fv(c.close)}V=${c.volume ? (c.volume / 1e6).toFixed(1) + "M" : "n/a"}`;
+			})
+			.join(" | ");
+		rows.push(`candles(10d): ${candleStr}`);
+	}
 	return rows.join("\n      ");
 }
 
@@ -270,7 +301,7 @@ function fmtPct(v: number | undefined): string {
 	return (v >= 0 ? "+" : "") + (v * 100).toFixed(1) + "%";
 }
 
-function marketStateDigest(ctx: AnalysisContext): string {
+export function marketStateDigest(ctx: AnalysisContext): string {
 	return Object.values(ctx.marketState)
 		.map(
 			(s) =>
@@ -305,9 +336,26 @@ const BLIND_NOTE = (ctx: AnalysisContext) =>
 		? `\n\n[BACKTEST/BLIND MODE] You do NOT have access to any market data after the snapshot date. Reason strictly from the snapshot provided. Do not claim knowledge of outcomes that occurred after the snapshot timestamp.`
 		: "";
 
+/** Date/time preamble injected at the top of every system prompt. The agent must
+ * treat this instant as "now" and never reason from a different date — judging
+ * stale snapshot data as the wrong day was a recurring failure mode. */
+export function datePreamble(ctx?: AnalysisContext): string {
+	const clock = kstClock(ctx?.now);
+	const snapAt = ctx?.snapshot?.generatedAt;
+	return (
+		`## 현재 기준 시각 (모든 판단의 절대 기준 — 다른 날짜를 현재로 가정 금지)\n` +
+		`오늘: ${clock.date} (${clock.dow}), 현재 ${clock.time} KST\n` +
+		(snapAt
+			? `제공된 시장 데이터 시점: ${snapAt} — 이 시점까지의 정보만 유효하다. 이 시점 이후에 일어난 일은 단정 짓지 마라.\n`
+			: "") +
+		`⚠ 위 날짜/시각만이 '현재'다. 스냅샷 시점 이후의 사건을 알고 있는 척 금지.`
+	);
+}
+
 /** Build the system prompt for a role. */
-export function systemPrompt(role: AgentRole): string {
-	const common = `You are a senior investment analyst operating inside a multi-agent investment desk. 항상 한국어로 답변하라. 추론 과정이나 분석 단계를 나열하지 말고, 최종 결론만 간결하게 전달하라. Be rigorous, evidence-based, and concise. Cite the specific metric you used.\n\n숫자 표시 규칙 (절대 준수):\n- 100K, 1M 같은 영문 약자 사용 금지. 정확한 숫자로 표시: 100,000\n- 모든 금액에 화폐 단위 필수 표시: 278,000원, $217.64\n- 한국 주식 = 원(원/원화/KRW), 미국 주식 = 달러($/USD). 절대 혼동 금지.\n- 백분율은 소수점 첫째 자리까지: 12.3%\n\n시장 데이터가 오래되었거나 실시간 변동(미국장/야간선물)이 감지되면 refresh_market_data 도구를 호출하여 최신 데이터를 가져온 후 분석하라.
+export function systemPrompt(role: AgentRole, ctx?: AnalysisContext): string {
+	const preamble = datePreamble(ctx);
+	const common = `${preamble}\n\nYou are a senior investment analyst operating inside a multi-agent investment desk. 항상 한국어로 답변하라. 추론 과정이나 분석 단계를 나열하지 말고, 최종 결론만 간결하게 전달하라. Be rigorous, evidence-based, and concise. Cite the specific metric you used.\n\n숫자 표시 규칙 (절대 준수):\n- 100K, 1M 같은 영문 약자 사용 금지. 정확한 숫자로 표시: 100,000\n- 모든 금액에 화폐 단위 필수 표시: 278,000원, $217.64\n- 한국 주식 = 원(원/원화/KRW), 미국 주식 = 달러($/USD). 절대 혼동 금지.\n- 백분율은 소수점 첫째 자리까지: 12.3%\n\n시장 데이터가 오래되었거나 실시간 변동(미국장/야간선물)이 감지되면 refresh_market_data 도구를 호출하여 최신 데이터를 가져온 후 분석하라.\n\n
 
 현금성 자산 (Cash-Equivalent Assets) — CRITICAL:
 - 포트폴리오 데이터에 "Cash-Equivalent Holdings"로 별도 표시되는 종목들은 현금 등가물이다. 머니마켓 ETF, 초단기금융 ETF, 초단기채권 ETF 등이 여기에 해당한다.
@@ -469,7 +517,7 @@ export function newsAnalystTask(ctx: AnalysisContext): string {
 			)
 			.join(", ") || "(none)";
 	return [
-		systemPrompt("news"),
+		systemPrompt("news", ctx),
 		"",
 		`TODAY: ${ctx.snapshot.generatedAt}`,
 		`MARKET STATE: KR ${kr?.session}${kr?.isOpen ? " (OPEN)" : " (closed)"} | US ${us?.session}${us?.isOpen ? " (OPEN)" : " (closed)"}`,

@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import { buildAnalysisContext } from "../agents/pipeline.js";
 import { runAnalysis } from "../agents/debate.js";
+import { runOrchestrator } from "../agents/orchestrator.js";
 import { recordDecision } from "../agents/memory.js";
 import { ROLE_LABELS } from "../agents/roles.js";
 import { out, outputJson } from "../output.js";
@@ -27,6 +28,10 @@ export function registerAnalyzeCommands(root: Command): void {
 		.option("--as-of <date>", "ISO date / YYYY-MM-DD for backtesting")
 		.option("--json", "JSON output")
 		.option("--report", "include full per-agent reports in output")
+		.option(
+			"--debate",
+			"legacy fixed bull/bear debate pipeline (default: PM orchestrator)",
+		)
 		.action(async (opts) => runObjective("portfolio-recommend", opts));
 
 	analyze
@@ -39,6 +44,10 @@ export function registerAnalyzeCommands(root: Command): void {
 		.option("--as-of <date>", "ISO date / YYYY-MM-DD for backtesting")
 		.option("--json", "JSON output")
 		.option("--report", "include full per-agent reports in output")
+		.option(
+			"--debate",
+			"legacy fixed bull/bear debate pipeline (default: PM orchestrator)",
+		)
 		.action(async (opts) => runObjective("strategy", opts));
 }
 
@@ -50,6 +59,7 @@ interface AnalyzeOpts {
 	asOf?: string;
 	json?: boolean;
 	report?: boolean;
+	debate?: boolean;
 }
 
 async function runObjective(
@@ -70,12 +80,20 @@ async function runObjective(
 		refresh: opts.refresh,
 		fetchNews: opts.news !== false,
 		blind: opts.blind,
+		// Backtest mode (--blind or --as-of) locks to the cached snapshot — no live fetches.
+		offline: opts.blind || Boolean(opts.asOf),
 		asOf: opts.asOf,
 	});
 
 	if (!opts.json)
-		out("▶ running analyst team → bull/bear debate → risk → PM synthesis…");
-	const outcome = await runAnalysis(ctx, ctx.config);
+		out(
+			opts.debate
+				? "▶ running analyst team → bull/bear debate → risk → PM synthesis…"
+				: "▶ PM orchestrator: delegating to specialist agents (parallel)…",
+		);
+	const outcome = opts.debate
+		? await runAnalysis(ctx, ctx.config)
+		: await runOrchestrator(ctx, ctx.config);
 
 	// Persist to memory for future reflection.
 	recordDecision(outcome.recommendation);
@@ -125,7 +143,7 @@ async function runObjective(
 	}
 
 	// Surface any agent runtime errors.
-	const errs = outcome.raw.filter((r) => r.error);
+	const errs = "raw" in outcome ? outcome.raw.filter((r) => r.error) : [];
 	if (errs.length) {
 		out("\n(agent errors):");
 		for (const e of errs) out(`  ${e.role}: ${e.error}`);

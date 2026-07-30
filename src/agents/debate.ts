@@ -1,7 +1,12 @@
 import type { AgentReport, AgentRole, Recommendation } from "../types.js";
 import type { AppConfig } from "../config/app-config.js";
 import type { AnalysisContext } from "./roles.js";
-import { parseRecommendation, runRole, type RunResult } from "./registry.js";
+import {
+	normalizeRecommendation,
+	parseRecommendation,
+	runRole,
+	type RunResult,
+} from "./registry.js";
 
 export interface AnalysisOutcome {
 	reports: AgentReport[];
@@ -106,56 +111,15 @@ export async function runAnalysis(
 	raw.push(pm);
 
 	const pmParsed = (pm.parsed ?? {}) as Partial<Recommendation>;
-
-	// Validate/normalize positions; drop any hallucinated empty-ticker entries.
-	const positions = (
-		Array.isArray(pmParsed.positions) ? pmParsed.positions : []
-	).filter((p) => String(p?.ticker ?? "").trim().length > 0);
-
-	const recommendation: Recommendation = {
-		generatedAt: baseCtx.snapshot.generatedAt,
-		objective: baseCtx.objective,
-		marketState: baseCtx.marketState,
-		positions: positions.map((p) => ({
-			ticker: String(p?.ticker ?? ""),
-			name: p?.name ? String(p.name) : undefined,
-			action: (["buy", "hold", "trim", "sell", "watch", "avoid"].includes(
-				String(p?.action),
-			)
-				? String(p?.action)
-				: "hold") as Recommendation["positions"][number]["action"],
-			confidence:
-				typeof p?.confidence === "number" && isFinite(p.confidence)
-					? Math.max(0, Math.min(1, p.confidence))
-					: 0.5,
-			rationale: String(p?.rationale ?? ""),
-			targetWeight: (() => {
-				const v = p?.targetWeight;
-				if (typeof v !== "number" || !isFinite(v)) return undefined;
-				// Normalize: PM sometimes outputs 25 (percent) instead of 0.25.
-				// Values > 1 are treated as percentages and divided by 100.
-				if (v > 1) return v / 100;
-				return v;
-			})(),
-			horizon: (["short", "medium", "long"].includes(String(p?.horizon))
-				? String(p?.horizon)
-				: undefined) as "short" | "medium" | "long" | undefined,
-			keyRisks: Array.isArray(p?.keyRisks) ? p.keyRisks.map(String) : [],
-		})),
-		strategy: String(pmParsed.strategy ?? pm.text),
-		cashGuidance: pmParsed.cashGuidance
-			? String(pmParsed.cashGuidance)
-			: undefined,
-		warnings: Array.isArray(pmParsed.warnings)
-			? pmParsed.warnings.map(String)
-			: [],
+	const recommendation = normalizeRecommendation(
+		pmParsed,
+		pm.text,
+		baseCtx,
 		reports,
 		debate,
-		snapshotGeneratedAt: baseCtx.snapshot.generatedAt,
-		portfolioAsOf: baseCtx.portfolio.asOf,
-	};
+	);
 
 	return { reports, debate, recommendation, raw };
 }
 
-export { parseRecommendation };
+export type { parseRecommendation };

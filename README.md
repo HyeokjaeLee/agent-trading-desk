@@ -2,9 +2,9 @@
 
 > Agent-friendly multi-agent investment CLI. Aggregates your **KIS + Toss** accounts
 > (read-only), pulls **PBR / PER / PSR / PCR + charts** from **yfinance** (single source
-> of truth), and runs a **debating team of investment agents** (technical, fundamental,
-> news, bull/bear, risk, judgment-reviewer, portfolio-manager) to a consensus
-> portfolio / strategy. Built on the **pi SDK** with TypeScript + Bun.
+> of truth), and runs a **PM-orchestrated team of investment agents** — the portfolio-manager
+> delegates to specialist agents (technical, fundamental, news, bull/bear, risk, reviewer) in
+> parallel and synthesizes a consensus portfolio / strategy. Built on the **pi SDK** with TypeScript + Bun.
 
 Designed for **agent consumers** (Openclaw, Hermes, Claude Code, OpenCode, …) more than
 for humans: every command supports `--json` with a stable schema, no interactive prompts,
@@ -20,11 +20,12 @@ and clear exit codes. It **never places orders** — account access is strictly 
 - **Read-only brokerage.** Aggregates cash (KRW/USD) + holdings across **all** linked
   KIS profiles and Toss accounts via **native clients** (`src/broker/` — no external package dep).
   No order/trade endpoints are ever called.
-- **Multi-agent debate.** Specialist analysts produce independent reports → **bull/bear**
-  debate adversarially → **risk manager** sizes/gates → **judgment reviewer**
-  (devil's advocate) checks for stale data, priced-in news, and overconfidence →
-  **portfolio manager** synthesizes the final decision. Inspired by
-  [TradingAgents](https://github.com/tauricresearch/tradingagents),
+- **PM-orchestrated delegation.** The portfolio-manager is the main agent: it decides which
+  specialists to consult, dispatches them in parallel (`consult_specialists`), re-queries
+  persistent specialist sessions as needed, and synthesizes the final decision. (The fixed
+  analyst → bull/bear → risk → reviewer pipeline is still available via `--debate`.) Every
+  system prompt carries the current date/time so agents reason from the correct "today".
+  Inspired by [TradingAgents](https://github.com/tauricresearch/tradingagents),
   [TradingCodex](https://github.com/monarchjuno/tradingcodex).
 - **Cross-market leading indicators.** When the Korean market is closed, US proxies
   (e.g. **SOXX/SMH** = Philadelphia Semiconductor index, **MU** = Micron, **NVDA**)
@@ -91,7 +92,9 @@ All commands accept `--json`. Analyze flags: `--symbols AAPL,005930`,
 
 `technical` · `fundamental` · `news` · `bull` · `bear` · `risk` · `reviewer`
 · `portfolio-manager`. Assign any available model to any role, or set a
-`td agent default`. Roles run: analysts (parallel) → bull/bear debate (N rounds) →
+`td agent default`. **Default:** the portfolio-manager is the orchestrator — it
+decides which specialists to consult and dispatches them in parallel, then synthesizes.
+**Legacy (`--debate`):** fixed analysts (parallel) → bull/bear debate (N rounds) →
 risk + reviewer (parallel) → portfolio-manager synthesis.
 
 ## Output schema (`td analyze … --json`)
@@ -121,11 +124,38 @@ src/
   auth/   providers.ts accounts.ts     # models (pi AuthStorage) + brokerage discovery
   accounts/  kis.ts toss.ts aggregate.ts  # READ-ONLY aggregation → AggregatedPortfolio
   broker/  config.ts http.ts kis.ts toss.ts  # NATIVE read-only KIS+Toss clients + shared ~/.kis-cli config
-  news/   browser-use.ts      # news via browser-use MCP (graceful degradation)
-  agents/  roles.ts registry.ts debate.ts pipeline.ts memory.ts   # multi-agent orchestration
-  commands/                   # auth, agent, market, account, analyze
-  market/  yfinance.ts (yahoo-finance2, TS-native fundamentals+TA), proxies.ts, market-state.ts, ticker-map.ts
+  news/   browser-use.ts collector.ts   # news via browser-use MCP + RSS (graceful degradation)
+  agents/
+    now.ts                  # KST clock — injects today's date/time into every system prompt
+    roles.ts                # dynamic system/user prompts + digests (date-aware)
+    agent-tools.ts          # refresh_market_data / search_ticker / get_portfolio (offline-aware)
+    session-factory.ts      # createRoleSession + runSessionTurn (shared by all paths)
+    sub-agent-pool.ts       # persistent specialist sessions: consult / consultBatch (parallel)
+    orchestrator.ts         # PM-as-orchestrator pipeline (DEFAULT): PM delegates to specialists
+    registry.ts             # legacy one-shot runRole + shared parse/normalize helpers
+    debate.ts pipeline.ts memory.ts tax-context.ts vision.ts  # legacy debate + context assembly
+  commands/                   # auth, agent, market, account, analyze, ask, bot
+  bot/  telegram.ts session.ts   # Telegram bot (PM orchestrator + per-chat persistent pools)
+  market/  yfinance.ts (yahoo-finance2 + Naver fallback, period2 historical cap), macro.ts, frgn.ts,
+           naver.ts, snapshot.ts, proxies.ts, market-state.ts, ticker-map.ts
+  test/  data-lock.ts          # E2E: date injection + offline lock + pool parallel/dedupe + delegation guard
 ```
+
+## Execution model
+
+- **Default (PM orchestrator).** `td ask` / `td analyze` / Telegram all run the PM as the main
+  agent: it decides which specialists to consult, dispatches them in parallel
+  (`consult_specialists`), re-queries persistent specialist sessions as needed, and synthesizes
+  the final answer. Every system prompt carries the current KST date/time so agents reason from
+  the correct "today".
+- **Legacy debate (`--debate`).** `td analyze --debate` runs the fixed analyst → bull/bear → risk →
+  reviewer → PM pipeline (`runAnalysis`).
+- **Data/network policy.** Specialists share one cached snapshot; `refresh_market_data` /
+  `search_ticker` / `get_portfolio` are the only live-network tools and are all gated by
+  `ctx.offline` (backtest/E2E locks agents to the cached snapshot; refresh is serialized so
+  parallel specialists can't interleave writes).
+- **Session lifetime.** Specialist sessions persist for one orchestration run (CLI) or per chat
+  with a 30-min idle TTL (Telegram), so the PM can re-query a specialist within a conversation.
 
 ## Safety
 
