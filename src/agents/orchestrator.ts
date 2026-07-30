@@ -34,6 +34,7 @@ import {
 	createRefreshTool,
 	createSearchTickerTool,
 	createGetPortfolioTool,
+	createDiscoverProxiesTool,
 } from "./agent-tools.js";
 import { SubAgentPool } from "./sub-agent-pool.js";
 import { normalizeRecommendation, parseRecommendation } from "./registry.js";
@@ -69,6 +70,12 @@ export function orchestratorSystemPrompt(ctx: AnalysisContext): string {
 ## 전문가 서브에이전트 (도구로 호출)
 ${SPECIALIST_ROSTER}
 
+### 사용 가능한 도구
+- refresh_market_data: 최신 시장 데이터 조회
+- search_ticker: 종목명→티커 검색
+- get_portfolio: 내 계좌 조회 (CLI만)
+- discover_proxies: **연관주 자동 발견** — 새 종목의 해외 연관주·선행지표를 추론하여 proxy-map에 추가. 이미 매핑된 섹터(반도체)는 자동으로 연관주가 제공되지만, 새 섹터(배터리, 바이오 등) 종목을 다룰 때 반드시 discover_proxies로 연관주를 찾아 추가하라.
+- consult_specialist / consult_specialists: 전문가에게 위임
 ## 작동 원칙 (절대 준수)
 1. **위임 필수**: 질문을 분석해 필요한 전문가를 결정하라. 단순 조회도 최소 1명, 복합 분석은 여러 명에게 위임. 전문가 보고 없는 최종 답은 무효다.
 2. **병렬 활용**: 여러 전문가가 필요하면 consult_specialists(역할 배열)로 한 번에 병렬 위임하라 — 실행 시간이 크게 줄어든다.
@@ -237,6 +244,8 @@ export async function runOrchestrator(
 		createRefreshTool(() => ctx),
 		createSearchTickerTool(() => ctx),
 		...(ctx.allowAccountAccess ? [createGetPortfolioTool(() => ctx)] : []),
+		// discover_proxies: PM auto-discovers overseas peers for new sectors (offline-gated inside the tool).
+		createDiscoverProxiesTool(() => ctx),
 	];
 	// A reused (Telegram) pool must start each run fresh — don't synthesize a new
 	// answer from the previous message's specialist reports.

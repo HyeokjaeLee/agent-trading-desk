@@ -17,6 +17,14 @@ import { Type } from "typebox";
 import YahooFinance from "yahoo-finance2";
 import { refreshSnapshot } from "../market/snapshot.js";
 import { aggregatePortfolio } from "../accounts/aggregate.js";
+import {
+	loadProxyMap,
+	saveProxyMap,
+	findCategory,
+	addProxy,
+	type ProxyEntry,
+} from "../market/proxy-store.js";
+import { reloadProxyMap } from "../market/proxies.js";
 import type { AnalysisContext } from "./roles.js";
 
 type CtxGetter = () => AnalysisContext;
@@ -169,6 +177,130 @@ export function createGetPortfolioTool(getCtx: CtxGetter): ToolDefinition {
 			} catch (e) {
 				return textResult(
 					`계좌 조회 실패: ${e instanceof Error ? e.message : String(e)}`,
+				);
+			}
+		},
+	});
+}
+
+/** Lowercase a category description into a slug id (ascii/digits/hyphens only). */
+function slugify(text: string): string {
+	return text
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "-")
+		.replace(/^-+|-+$/g, "");
+}
+
+/** discover_proxies — PM reasons about a new sector's overseas peers/leaders,
+ *  validates them via yfinance search, and persists a new proxy-map category.
+ *  Skips tickers already mapped; refuses offline. */
+export function createDiscoverProxiesTool(getCtx: CtxGetter): ToolDefinition {
+	return defineTool({
+		name: "discover_proxies",
+		label: "연관주 자동 발견",
+		description:
+			"특정 종목의 해외 연관주·선행지표를 추론하고 검색하여 proxy-map에 자동 추가한다. 새 섹터(배터리, 바이오, 자동차 등) 종목을 분석할 때 사용하라. 이미 매핑된 종목은 재검색하지 않는다.",
+		parameters: Type.Object({
+			ticker: Type.String({
+				description: "분석 대상 종목 (예: 373220.KS = LG에너지솔루션)",
+			}),
+			categoryDescription: Type.String({
+				description: "카테고리 설명 (예: Korean battery stocks)",
+			}),
+			suggestions: Type.Array(
+				Type.Object({
+					keyword: Type.String({
+						description:
+							"yfinance 검색 키워드 (예: lithium battery ETF, Tesla, CATL)",
+					}),
+					relation: Type.String({
+						description: "왜 연관있는지 (예: Global EV battery peer)",
+					}),
+				}),
+			),
+		}),
+		execute: async (
+			_id,
+			params: {
+				ticker: string;
+				categoryDescription: string;
+				suggestions: Array<{ keyword: string; relation: string }>;
+			},
+		) => {
+			const ctx = getCtx();
+			if (ctx.offline) {
+				return textResult(
+					"오프라인 모드: discover_proxies 실시간 검색이 차단되었다. 잠긴 스냅샷 데이터만 사용하라.",
+				);
+			}
+			const { ticker, categoryDescription, suggestions } = params;
+			try {
+				const map = loadProxyMap();
+				// Skip if this ticker is already mapped to any category.
+				if (findCategory(map, ticker, undefined, undefined)) {
+					return textResult(
+						`${ticker}는 이미 proxy-map에 매핑되어 있다. 재검색을 건너뛴다.`,
+					);
+				}
+				const categoryId = slugify(categoryDescription) || "discovered";
+				// Validate each suggestion via yfinance search; pick the best result.
+				const discovered: ProxyEntry[] = [];
+				for (const s of suggestions) {
+					try {
+						const res = await yahoo.search(s.keyword, {
+							quotesCount: 5,
+							newsCount: 0,
+						});
+						const quotes = (res.quotes ?? []).filter((q) => {
+							const qt = (q as { quoteType?: string }).quoteType;
+							return qt === "EQUITY" || qt === "ETF";
+						});
+						const pool = quotes.length > 0 ? quotes : (res.quotes ?? []);
+						const best = pool[0] as
+							| { symbol?: string; shortname?: string; longname?: string }
+							| undefined;
+						if (best?.symbol) {
+							discovered.push({
+								ticker: best.symbol,
+								name: best.shortname ?? best.longname ?? best.symbol,
+								relation: s.relation,
+							});
+						}
+					} catch {
+						/* skip a suggestion that fails to resolve */
+					}
+				}
+				if (discovered.length === 0) {
+					return textResult(
+						`${ticker}의 연관주를 검색하지 못했다. 제안 키워드를 다시 확인하라.`,
+					);
+				}
+				// Create the category if absent; ensure the ticker is a match member.
+				let cat = map.categories.find((c) => c.id === categoryId);
+				if (!cat) {
+					cat = {
+						id: categoryId,
+						description: categoryDescription,
+						matchTickers: [ticker],
+						matchKeywords: [],
+						proxies: [],
+					};
+					map.categories.push(cat);
+				} else if (!cat.matchTickers.includes(ticker)) {
+					cat.matchTickers.push(ticker);
+				}
+				for (const d of discovered) addProxy(map, categoryId, d);
+				saveProxyMap(map);
+				reloadProxyMap(); // refresh the in-memory cache (proxies.ts cachedMap)
+				const lines = discovered.map(
+					(d) => `${d.ticker} — ${d.name} (${d.relation})`,
+				);
+				return textResult(
+					`${ticker} 연관주 ${discovered.length}개를 발견해 카테고리 "${categoryId}"에 추가했다:\n${lines.join("\n")}`,
+				);
+			} catch (e) {
+				return textResult(
+					`연관주 발견 실패: ${e instanceof Error ? e.message : String(e)}`,
 				);
 			}
 		},

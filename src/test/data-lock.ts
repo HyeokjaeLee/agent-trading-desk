@@ -27,6 +27,7 @@ import {
 	createRefreshTool,
 	createSearchTickerTool,
 	createGetPortfolioTool,
+	createDiscoverProxiesTool,
 } from "../agents/agent-tools.js";
 import {
 	orchestratorSystemPrompt,
@@ -227,6 +228,28 @@ const checks: Check[] = [
 			);
 			assert.match(JSON.stringify(res), /오프라인 모드/);
 			assert.match(JSON.stringify(res), /실시간 계좌 조회가 차단/);
+		},
+	},
+	{
+		name: "offline blocks discover_proxies from the network",
+		fn: async () => {
+			const tool = createDiscoverProxiesTool(() =>
+				lockedCtx({ offline: true }),
+			);
+			const res = await tool.execute(
+				"t",
+				{
+					ticker: "373220.KS",
+					categoryDescription: "Test category",
+					suggestions: [{ keyword: "battery ETF", relation: "test" }],
+				},
+				undefined,
+				undefined,
+				undefined as never,
+			);
+			const text = JSON.stringify(res);
+			assert.match(text, /오프라인 모드/);
+			assert.match(text, /discover_proxies 실시간 검색이 차단/);
 		},
 	},
 ];
