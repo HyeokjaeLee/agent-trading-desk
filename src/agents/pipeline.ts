@@ -3,7 +3,7 @@ import { aggregatePortfolio } from "../accounts/aggregate.js";
 import { refreshSnapshot, loadSnapshot } from "../market/snapshot.js";
 import { mapToYahoo } from "../market/ticker-map.js";
 import { getKoreanCode } from "../market/naver.js";
-import { expandWithProxies } from "../market/proxies.js";
+import { expandWithProxies, reloadProxyMap } from "../market/proxies.js";
 import { getMarketState } from "../market/market-state.js";
 import { runNewsWithFallback } from "../news/browser-use.js";
 import { fetchMacroRates } from "../market/macro.js";
@@ -137,14 +137,14 @@ async function fetchAncillary(
 }
 
 /** Assemble the full AnalysisContext: portfolio + snapshot + ancillary + memory. */
-export async function buildAnalysisContext(
-	opts: BuildContextOptions,
-): Promise<{
+export async function buildAnalysisContext(opts: BuildContextOptions): Promise<{
 	ctx: AnalysisContext;
 	portfolio: AggregatedPortfolio;
 	snapshot: MarketSnapshot;
 }> {
 	const config = loadConfig();
+	// Pick up any proxy-map.json edits since the last run.
+	reloadProxyMap();
 	const asOf = config.asOfDate ?? opts.asOf;
 	const historical = Boolean(asOf);
 	// Historical/blind mode ALWAYS locks the network — it cannot be bypassed by an explicit opts.offline:false.

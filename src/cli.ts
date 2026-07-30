@@ -6,6 +6,7 @@ import { registerAccountCommands } from "./commands/account.js";
 import { registerAnalyzeCommands } from "./commands/analyze.js";
 import { registerAskCommands } from "./commands/ask.js";
 import { registerBotCommands } from "./commands/bot.js";
+import { registerProxyCommands } from "./commands/proxy.js";
 import { fail } from "./output.js";
 
 // Prevent SIGPIPE from killing the process when stdout is piped in background mode.
@@ -30,6 +31,7 @@ registerAccountCommands(program);
 registerAnalyzeCommands(program);
 registerAskCommands(program);
 registerBotCommands(program);
+registerProxyCommands(program);
 
 program.parseAsync(process.argv).catch((err: unknown) => {
 	fail(err instanceof Error ? err.message : String(err), 1);
